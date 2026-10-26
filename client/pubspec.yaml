@@ -1,0 +1,17 @@
+name: quiz_game
+publish_to: none
+description: Quiz multijoueur avec OTP et WebSocket.
+version: 0.3.0+3
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.3.0
+  web_socket_channel: ^3.0.2
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+flutter:
+  uses-material-design: true

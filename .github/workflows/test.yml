@@ -1,0 +1,63 @@
+name: Quiz backend tests
+on: [push, pull_request]
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: test-only-password
+          POSTGRES_USER: quiz
+          POSTGRES_DB: quiz_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U quiz -d quiz_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: [6379:6379]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: npm run test:integration
+        env:
+          TEST_DATABASE_URL: postgres://quiz:test-only-password@127.0.0.1:5432/quiz_test
+          TEST_REDIS_URL: redis://127.0.0.1:6379
+
+  admin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: admin/package-lock.json
+      - run: npm ci --prefix admin
+      - run: npm run build --prefix admin
+
+  flutter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.7'
+          cache: true
+      - run: flutter pub get
+        working-directory: client
+      - run: flutter analyze
+        working-directory: client
+      - run: flutter test
+        working-directory: client
+      - run: flutter build web --no-web-resources-cdn
+        working-directory: client

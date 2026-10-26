@@ -1,0 +1,14 @@
+data/*
+!data/.gitkeep
+node_modules/
+admin/dist/
+.env
+coverage/
+
+client/.dart_tool/
+client/build/
+client/android/.gradle/
+client/android/local.properties
+client/ios/Flutter/Generated.xcconfig
+client/ios/Flutter/flutter_export_environment.sh
+client/ios/Pods/

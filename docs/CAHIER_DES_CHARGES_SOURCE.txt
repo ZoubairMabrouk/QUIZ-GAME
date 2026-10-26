@@ -1,0 +1,526 @@
+﻿Cahier des charges – Jeu de Quiz en ligne cross-plateforme
+Version 1.0 – 22 octobre 2026
+1. Présentation du projet
+1.1 Vision
+Une plateforme de quiz 100 % en ligne et cross-plateforme (iOS, Android, Web) combinant trois expériences :
+Salles amicales : jouer entre amis via un ID de salle, avec score par réponse et classement.
+Compétition quotidienne « Réponse la plus rapide » : tournoi massif à élimination progressive, à heure fixe, avec cadeaux.
+Économie à base de tokens : les Silver Tokens (monnaie douce) donnent accès à la compétition ; les Golden Tokens sont une récompense premium.
+1.2 Objectifs
+Engager les joueurs quotidiennement (rendez-vous de la compétition).
+Monétiser par le store (achat de Silver Tokens) et la publicité (vidéos récompensées).
+Offrir une expérience temps réel équitable, fluide et résistante à la triche.
+Permettre le contenu généré par les utilisateurs (sous-catégories, salles de questions).
+1.3 Périmètre
+Inclus : applications mobiles et web, back-office d'administration, moteur temps réel, économie de tokens, store, publicité, modération, notifications, analytique. Exclu (v1) : jeu hors ligne, chat vocal/vidéo, marketplace entre joueurs, retrait d'argent réel.
+2. Hypothèses et points à valider
+#
+Point
+Hypothèse retenue dans ce document
+H1
+Règle des « 90 % »
+À chaque question, seuls les joueurs ayant répondu juste restent en lice, et parmi eux les 90 % les plus rapides passent ; les 10 % les plus lents sont éliminés.
+H2
+Seuil de fin de phase 1
+La phase 1 s'arrête dès que les survivants ≤ 5 % des inscrits initiaux.
+H3
+Phase 2 (finale)
+Élimination du ou des joueurs les moins bons à chaque question (mort subite) jusqu'à un seul vainqueur.
+H4
+Cadeaux physiques/forfaits
+Nécessitent des partenaires (opérateurs télécom, e-commerce) et un cadre légal par pays.
+H5
+Heure de la compétition
+Un créneau quotidien unique par fuseau/zone, configurable par l'administrateur.
+H6
+Marchés cibles
+Tunisie / Maghreb en premier, puis internationalisation (FR, AR, EN).
+Calcul utile : avec H1, il faut au plus ⌈ln(0,05)/ln(0,9)⌉ = 29 questions pour passer sous 5 % (moins si des joueurs répondent faux, ce qui est le cas général). Prévoir un nombre maximal de questions (ex. 40) et une règle de repli (éliminer un pourcentage plus fort si la limite approche).
+3. Acteurs
+Acteur
+Description
+Visiteur
+Non connecté ; peut voir l'accueil et s'inscrire.
+Joueur
+Utilisateur inscrit : joue, crée des salles, participe aux compétitions.
+Créateur
+Joueur qui crée des sous-catégories et des salles de questions.
+Modérateur
+Valide le contenu utilisateur, traite les signalements.
+Administrateur
+Gère catégories, questions, compétitions, tokens, cadeaux, bannissements.
+Annonceur / régie pub
+Système externe (SDK publicitaire).
+Passerelles de paiement
+Apple App Store, Google Play, paiement web (Stripe/solution locale).
+Partenaires cadeaux
+Opérateurs télécom, boutiques (bons de commande).
+4. Analyse des besoins fonctionnels
+4.1 M1 – Comptes et profil
+F1.1 Inscription / connexion : email + mot de passe, Google, Apple, numéro de téléphone (OTP).
+F1.2 Profil : pseudo unique, avatar, pays, langue, statistiques (parties, précision, vitesse moyenne), badges.
+F1.3 Liste d'amis : ajout par pseudo / lien d'invitation / QR code ; invitation à une salle.
+F1.4 Suppression de compte et export des données (conformité RGPD/loi locale).
+F1.5 Vérification d'âge (majorité requise pour les cadeaux réels ; consentement parental sinon).
+4.2 M2 – Catalogue de contenu
+F2.1 Catégories officielles : Sport, Culture générale, Animaux, Géographie, Histoire, Science & Physique, Mathématiques, etc. (extensible).
+F2.2 Question : énoncé, 4 choix (QCM), bonne réponse, difficulté (1–5), catégorie, langue, média optionnel, explication, source.
+F2.3 Types ultérieurs : vrai/faux, image, audio, réponse numérique.
+F2.4 Import en masse (CSV/JSON), versionnage, statut (brouillon, validé, retiré).
+F2.5 Statistiques par question (taux de réussite, temps moyen) pour calibrer la difficulté.
+F2.6 Anti-répétition : un joueur ne revoit pas une question déjà vue dans une fenêtre configurable.
+4.3 M3 – Salles amicales (mode privé)
+F3.1 Création de salle : nom, catégorie ou sous-catégorie, nombre de questions, temps par question, nombre max de joueurs, public/privé.
+F3.2 ID de salle court (6 caractères) + lien + QR code pour rejoindre.
+F3.3 Lobby : liste des joueurs, statut « prêt », hôte peut lancer ou expulser.
+F3.4 Déroulement synchronisé : question affichée simultanément, minuteur serveur, réponse.
+F3.5 Score à chaque réponse : points = base × difficulté + bonus de rapidité (voir règles §5.1) ; affichage immédiat.
+F3.6 Classement en direct entre chaque question et classement final ; podium.
+F3.7 Récompense : Silver Tokens attribués selon le classement final (§5.3).
+F3.8 Revanche, historique des parties, reconnexion en cours de partie.
+F3.9 Limites anti-abus : plafond quotidien de tokens gagnables en salle (anti-farming entre comptes complices).
+4.4 M4 – Sous-catégories et salles de questions créées par les utilisateurs
+F4.1 Création de sous-catégories rattachées à une catégorie officielle (nom, description, image).
+F4.2 Création de banques de questions personnelles (éditeur, import CSV).
+F4.3 Visibilité : privée (amis via ID), non répertoriée (lien), publique (après modération).
+F4.4 Modération : filtre automatique (mots interdits, détection de contenu inapproprié) + file de validation + signalement.
+F4.5 Les salles basées sur du contenu utilisateur ne donnent pas ou peu de tokens (anti-triche : le créateur connaît les réponses). À définir : récompense à 0 ou plafonnée.
+F4.6 Notation des banques par la communauté, tri par popularité.
+4.5 M5 – Compétition quotidienne « Réponse la plus rapide »
+F5.1 Planification : l'administrateur définit date/heure, coût d'inscription en Silver Tokens, dotation, catégories mélangées.
+F5.2 Réservation : le joueur paie le coût en Silver Tokens avant la fermeture des inscriptions (T-5 min) ; remboursement si annulation de la compétition.
+F5.3 Rappels : notifications push à T-1 h et T-5 min.
+F5.4 Salle d'attente globale avec compte à rebours ; entrée en retard interdite après le début.
+F5.5 Phase 1 – élimination progressive : à chaque question, élimination des mauvaises réponses et des 10 % de bonnes réponses les plus lentes (H1) ; arrêt quand survivants ≤ 5 % des inscrits (H2).
+F5.6 Récompenses de palier : tous les survivants de la fin de phase 1 reçoivent un cadeau (Golden Token, forfait internet, …).
+F5.7 Phase 2 – finale : les survivants continuent jusqu'à un seul vainqueur (H3) ; départage par temps cumulé puis tirage au sort si égalité parfaite.
+F5.8 Cadeau spécial du vainqueur (bon de commande, autre).
+F5.9 Les éliminés peuvent regarder en spectateur (nombre de survivants en direct) et voient leur rang final.
+F5.10 Annulation si inscrits < minimum (ex. 50) avec remboursement automatique.
+F5.11 Historique, Hall of Fame, classement hebdomadaire/mensuel.
+4.6 M6 – Économie de tokens
+F6.1 Silver Token (monnaie douce, consommable) : sert à réserver la compétition ; gagné en jouant, par la pub, par achat, bonus quotidien.
+F6.2 Golden Token (récompense premium) : échangeable contre des avantages (entrées spéciales, cosmétiques, bons). Non achetable (à valider).
+F6.3 Grand livre (ledger) immuable : chaque mouvement de token est une écriture horodatée, avec solde recalculable.
+F6.4 Gains de jeu dans d'autres catégories (parties solo/duels) avec plafond quotidien.
+F6.5 Vidéo récompensée : N vidéos/jour max pour X tokens.
+F6.6 Remboursements, ajustements administrateur tracés.
+4.7 M7 – Store et paiements
+F7.1 Packs de Silver Tokens (3 à 5 tailles), offres promotionnelles, abonnement « sans pub » (optionnel).
+F7.2 Achats in-app (Apple/Google) avec validation serveur des reçus ; paiement web (carte ou solution locale).
+F7.3 Factures, historique, gestion des litiges et des remboursements.
+4.8 M8 – Publicité
+F8.1 Vidéos récompensées, interstitiels entre parties (fréquence plafonnée), bannières légères.
+F8.2 Aucune publicité pendant une manche ou une compétition en cours.
+F8.3 Consentement (CMP/RGPD), ciblage non personnalisé pour les mineurs.
+4.9 M9 – Cadeaux et logistique de récompense
+F9.1 Catalogue de cadeaux, stocks, partenaires.
+F9.2 Remise : code ou crédit forfait (API opérateur), bon à utiliser, coupon.
+F9.3 Vérification d'identité/téléphone avant remise, anti-doublon par personne.
+F9.4 Suivi des remises (statut, expiration), support.
+4.10 M10 – Notifications, social, support
+Push (FCM/APNs), emails, in-app. Invitation d'amis, partage de résultat. Centre d'aide, signalement, contact support.
+4.11 M11 – Back-office d'administration
+Gestion des utilisateurs (recherche, sanctions), contenu (questions, modération), compétitions (planification, supervision live), tokens/ledger, cadeaux, publicité, tableaux de bord KPI, journaux d'audit, rôles et permissions.
+5. Règles métier
+5.1 Calcul du score (salles amicales)
+points = 0 si réponse fausse ou hors délai
+points = base(difficulté) + bonus_vitesse
+base = 100 × difficulté (1..5)
+bonus_vitesse = 50 × (temps_restant / temps_total)
+série (streak) : +10 % par bonne réponse consécutive, plafonné à +50 %
+Le temps de réponse est mesuré côté serveur (réception du message moins envoi de la question, compensé par la latence estimée) pour l'équité.
+5.2 Algorithme de la compétition
+survivants = inscrits
+pour chaque question q :
+    envoyer q (même instant, minuteur serveur 10 s)
+    ok = joueurs ayant répondu juste
+    trier ok par temps de réponse croissant
+    passants = les 90 % premiers de ok (arrondi supérieur)
+    éliminés = survivants − passants
+    survivants = passants
+    si survivants ≤ 5 % des inscrits : fin phase 1, cadeaux de palier
+phase 2 : mort subite jusqu'à 1 vainqueur
+Cas limites : tous faux (on garde les plus rapides ou on rejoue une question), égalité au seuil (on départage au temps cumulé, puis à l'horodatage serveur), déconnexion (24 s de tolérance pour reconnexion, sinon réponse vide = éliminé).
+5.3 Récompenses de classement (salles amicales) – exemple
+Rang
+Silver Tokens
+1er
+20
+2e
+12
+3e
+8
+Autres
+3 (participation)
+Plafond quotidien de gain par joueur, valeur configurable depuis l'administration.
+5.4 Autres règles
+Une seule inscription par joueur et par compétition ; un appareil = un compte actif en compétition.
+Compte vérifié (téléphone) obligatoire pour les compétitions avec cadeaux.
+Les cadeaux non réclamés expirent après un délai (ex. 30 jours).
+6. Besoins non fonctionnels
+Catégorie
+Exigence
+Performance
+Latence aller-retour de réponse < 150 ms au p95 ; affichage de la question simultané (écart < 300 ms entre joueurs).
+Scalabilité
+100 000 joueurs simultanés dans une compétition (objectif v1 : 20 000), montée en charge horizontale.
+Disponibilité
+99,9 % ; 99,95 % sur le créneau de compétition.
+Équité
+Chronométrage serveur, mêmes questions au même instant, pas d'avantage de plateforme.
+Sécurité
+TLS 1.3, OAuth2/JWT courte durée, chiffrement au repos, OWASP ASVS niveau 2.
+Anti-triche
+Pas de bonne réponse envoyée au client avant la fin du temps ; détection d'anomalies (temps < seuil humain, bots, multi-comptes).
+Conformité
+RGPD / loi tunisienne sur la protection des données, règles des stores, réglementation des jeux-concours et loteries.
+Accessibilité
+WCAG 2.1 AA, tailles de police, contraste, lecteurs d'écran.
+Internationalisation
+FR / AR (RTL) / EN, contenu par langue.
+Observabilité
+Logs structurés, métriques, traces, alertes, tableaux de bord temps réel.
+Résilience
+Reconnexion automatique, reprise d'état, sauvegardes quotidiennes, RPO ≤ 15 min, RTO ≤ 1 h.
+Compatibilité
+iOS 15+, Android 8+, navigateurs modernes ; connexions 3G/4G instables.
+7. Architecture
+7.1 Vue d'ensemble
+Architecture en services (monolithe modulaire au départ pour les modules non temps réel, services dédiés pour le temps réel) :
+  [Mobile iOS/Android]   [Web]   [Back-office Admin]
+            \              |               /
+             \             |              /
+              +------ CDN / WAF / DDoS ---+
+                          |
+                   API Gateway (REST + WS)
+          +--------+------+------+--------+---------+
+          |        |      |      |        |         |
+       Auth/    Catalogue  Salles  Compétition  Économie   Notifications
+       Profil   Questions  (room)  (tournoi)   Tokens/Store   (push/mail)
+          |        |      |      |        |         |
+          +--------+------+--Bus d'événements (Kafka/NATS)--+
+                   |                |                |
+           PostgreSQL          Redis Cluster      Stockage objets
+        (données maître,    (état temps réel,    (médias, exports)
+          ledger)           files, classements)
+                   |
+        Analytique (ClickHouse/BigQuery) + Observabilité
+7.2 Services
+Service
+Responsabilité
+Auth & Profil
+Inscription, sessions, amis, vérification téléphone.
+Catalogue
+Catégories, questions, banques utilisateur, modération.
+Game Room
+Salles amicales : lobby, déroulement, scores, classement.
+Competition
+Planification, inscriptions, moteur d'élimination, finale.
+Realtime Gateway
+Connexions WebSocket, diffusion, reconnexion, heartbeat.
+Wallet / Ledger
+Silver & Golden Tokens, écritures atomiques et idempotentes.
+Store & Billing
+Packs, validation des reçus, litiges.
+Ads
+Intégration SDK, plafonds, crédits de récompense.
+Rewards
+Catalogue de cadeaux, attribution, intégration partenaires.
+Notification
+Push, email, planification.
+Anti-fraude
+Scoring de risque, détection de bots et multi-comptes.
+Admin
+Back-office et audit.
+7.3 Choix clés pour le temps réel et la montée en charge
+WebSocket pour la diffusion des questions et la réception des réponses ; repli en long-polling si besoin.
+Diffusion à grande échelle : la question est publiée une fois sur le bus, puis fan-out par N instances de la Realtime Gateway (sharding des connexions par hachage de l'ID joueur) ; Redis Pub/Sub ou NATS entre instances.
+Moteur de compétition à état en mémoire + Redis : les réponses s'écrivent dans une structure triée (sorted set clé = ID joueur, score = temps), le calcul des 90 % se fait par un seul « orchestrateur » élu (verrou distribué) pour éviter les incohérences ; état persisté à chaque question pour reprise après panne.
+Questions précalculées : la liste ordonnée des questions est tirée et gelée à T-10 min ; elle n'est jamais envoyée avant l'heure.
+Horloge : synchronisation NTP-like côté client (offset serveur) pour l'affichage du minuteur ; la décision reste serveur.
+Ledger : écritures PostgreSQL transactionnelles avec clé d'idempotence ; solde matérialisé et réconcilié.
+Pré-chauffage de l'infrastructure (scale-out planifié) avant chaque compétition.
+7.4 Modèle de données (principales entités)
+User(id, pseudo, email, phone, country, lang, status, created_at)
+Friendship(user_id, friend_id, status)
+Category(id, name, parent_id, owner_id NULL, visibility, status)
+Question(id, category_id, text, choices[], correct_idx, difficulty,
+         lang, media_url, author_id, status)
+QuestionBank(id, owner_id, title, visibility)
+Room(id, code, host_id, category_id, bank_id, settings, status)
+RoomPlayer(room_id, user_id, score, rank, tokens_awarded)
+RoomAnswer(room_id, user_id, question_id, choice, response_ms, points)
+Competition(id, starts_at, entry_cost, min_players, status, prize_pool)
+CompetitionEntry(competition_id, user_id, status, eliminated_at_q, rank)
+CompetitionAnswer(competition_id, question_no, user_id, choice, response_ms)
+WalletAccount(user_id, silver_balance, golden_balance)
+LedgerEntry(id, user_id, token_type, amount, reason, ref_id,
+            idempotency_key, created_at)
+Purchase(id, user_id, store, sku, receipt, status)
+Reward(id, type, label, stock, partner)
+RewardGrant(id, user_id, reward_id, competition_id, status, expires_at)
+Report(id, reporter_id, target_type, target_id, reason, status)
+8. Diagrammes
+8.1 Cas d'utilisation (synthèse)
+Joueur       -> S'inscrire / se connecter ; gérer profil et amis
+             -> Jouer par catégorie (solo / duel)
+             -> Créer / rejoindre une salle (ID de salle)
+             -> Créer sous-catégorie et banque de questions
+             -> Réserver la compétition (Silver Tokens)
+             -> Participer à la compétition ; consulter classements
+             -> Acheter des Silver Tokens ; regarder une pub récompensée
+             -> Réclamer un cadeau
+Modérateur   -> Valider / refuser contenu ; traiter signalements
+Administrateur -> Gérer catégories, questions, compétitions, cadeaux,
+                  tokens, utilisateurs ; consulter KPI
+8.2 Séquence – une question de compétition
+Admin/Scheduler  Competition  Realtime GW  Joueurs   Redis
+   | t=T  start  |              |            |         |
+   |------------>| charge état  |            |         |
+   |             |-- question n >|--diffuse->|         |
+   |             |              |<--réponse--|         |
+   |             |              |--stocke (ms serveur)->|
+   |             | fin du minuteur                      |
+   |             |<-------lit réponses triées ----------|
+   |             | calcule passants (90 % des justes)   |
+   |             |-- résultat/élimination -->|--notifie->|
+   |             | si survivants ≤ 5 % : phase 2        |
+8.3 Diagramme d'états – compétition
+PLANIFIÉE -> INSCRIPTIONS_OUVERTES -> INSCRIPTIONS_CLOSES
+   -> PHASE_1 (élimination 90 %) -> PALIER_ATTEINT (cadeaux)
+   -> PHASE_2 (mort subite) -> TERMINÉE (vainqueur)
+   Depuis INSCRIPTIONS_CLOSES : -> ANNULÉE (inscrits < min, remboursement)
+8.4 Diagramme d'états – salle amicale
+CRÉÉE -> LOBBY -> EN_COURS (question i) -> RÉSULTATS -> TERMINÉE
+                       ^------ revanche -------------|
+8.5 Flux économique des tokens
+SOURCES Silver : store (achat) | vidéo récompensée | salles/catégories
+                 | bonus quotidien | classement final
+                 \\                                 /
+                  ----> Wallet (ledger immuable) <----
+                                   |
+                    PUITS : réservation de la compétition
+                                   |
+Compétition --> Golden Token / forfait / bon (survivants) --> cadeau spécial
+9. Choix technologiques
+Couche
+Choix recommandé
+Justification / alternative
+Mobile + Web
+Flutter (iOS, Android, Web)
+Un seul code, animations fluides. Alternative : React Native + React/TypeScript pour le web.
+Back-office
+React + TypeScript + une bibliothèque de composants
+Rapide à produire, cohérent avec l'écosystème web.
+Backend temps réel
+Node.js (NestJS/TypeScript) ou Go pour la Realtime Gateway
+Go excelle pour des centaines de milliers de connexions ; NestJS pour la vitesse de développement.
+Backend métier
+.NET (ASP.NET Core) ou NestJS
+.NET : robustesse, typage, déjà maîtrisé dans l'équipe si applicable.
+Temps réel
+WebSocket natif (ou Socket.IO au MVP) + NATS/Redis Pub/Sub
+Fan-out rapide ; Socket.IO accélère le MVP.
+Bus d'événements
+NATS JetStream (ou Kafka si volume élevé)
+Léger, faible latence.
+Base principale
+PostgreSQL
+Transactions fiables pour le ledger.
+Cache / état live
+Redis Cluster
+Classements, sorted sets, verrous.
+Recherche
+OpenSearch/Meilisearch (optionnel)
+Recherche de banques et salles publiques.
+Stockage médias
+Objet S3-compatible + CDN
+Images, audio.
+Analytique
+ClickHouse ou BigQuery
+Événements de jeu, KPI.
+Auth
+Keycloak ou Auth0/Firebase Auth
+OAuth2, social login, OTP.
+Notifications
+FCM + APNs
+Standards.
+Pub
+AdMob / AppLovin MAX / Unity LevelPlay
+Médiation, vidéos récompensées.
+Paiement
+StoreKit/Play Billing + RevenueCat, Stripe (web)
+Validation des reçus simplifiée.
+Infra
+Docker + Kubernetes (GKE/EKS/AKS), Terraform
+Autoscaling, reproductibilité.
+CI/CD
+GitHub Actions + ArgoCD/Helm
+Déploiement continu.
+Observabilité
+Prometheus, Grafana, Loki, OpenTelemetry, Sentry
+Métriques, logs, traces, crashs.
+Modération auto
+API de modération de texte/image
+Réduction de la charge humaine.
+Recommandation de démarrage : monolithe modulaire (NestJS ou .NET) + service temps réel séparé + PostgreSQL + Redis, puis extraction progressive en services selon la charge.
+10. Sécurité, anti-triche et conformité
+Anti-triche : réponses validées uniquement côté serveur ; temps minimum humain (ex. < 250 ms = suspect) ; limitation de débit ; détection d'émulateurs/root (Play Integrity, App Attest) ; corrélation d'adresses IP/appareils pour les multi-comptes ; vérification téléphone ; bannissement et gel des gains.
+Fuite de questions : questions chiffrées en base, tirage tardif, jamais de réponse envoyée avant clôture ; rotation et réutilisation limitée du stock.
+Économie : ledger immuable, idempotence, plafonds quotidiens, détection d'anomalies de gain, audit des actions administrateur.
+Données personnelles : minimisation, consentement, durées de conservation, droit à l'effacement.
+Aspects légaux : règlement officiel du concours, absence de « mise d'argent réel » (les Silver Tokens ne doivent pas être convertibles en argent pour éviter la qualification de jeu d'argent), conditions des stores sur les cadeaux et les achats, protection des mineurs, fiscalité des lots.
+Contenu utilisateur : modération a priori pour le public, signalement, sanctions graduées.
+11. Planning prévisionnel
+Équipe cible : 1 chef de projet/PO, 2 développeurs mobile/web, 2 développeurs backend, 1 DevOps (mi-temps), 1 designer UI/UX, 1 testeur QA. Durée totale estimée : ≈ 9 mois.
+Phase
+Durée
+Contenu
+Livrable
+0. Cadrage
+3 sem.
+Validation des hypothèses, règlement, partenaires, KPI
+Backlog priorisé
+1. Conception
+4 sem.
+UX/UI, maquettes, architecture détaillée, modèle de données, prototypes
+Maquettes validées, ADR
+2. Socle technique
+4 sem.
+Infra, CI/CD, auth, profils, catalogue de base, back-office minimal
+Environnements dev/recette
+3. MVP – Salles amicales
+8 sem.
+Salles, lobby, temps réel, scores, classement, tokens de base
+MVP v0.1 (bêta fermée)
+4. Économie et monétisation
+6 sem.
+Wallet/ledger, store, pub récompensée, solo/duels par catégorie
+v0.2
+5. Compétition quotidienne
+8 sem.
+Planification, inscription, moteur d'élimination, finale, spectateur, cadeaux
+v0.3
+6. Contenu utilisateur
+4 sem.
+Sous-catégories, banques, modération, signalements
+v0.4
+7. Durcissement
+4 sem.
+Tests de charge, sécurité, anti-triche, accessibilité, i18n
+Release candidate
+8. Bêta ouverte + lancement
+4 sem.
+Bêta publique, corrections, soumission aux stores, lancement
+v1.0
+9. Exploitation
+continu
+Support, KPI, nouvelles catégories, événements
+Roadmap
+Jalons : M1 fin conception ; M3 MVP jouable ; M6 compétition fonctionnelle ; M8 bêta ouverte ; M9 lancement. Les phases 4 et 5 peuvent se chevaucher partiellement avec 2 équipes.
+12. Stratégie de test
+Niveau
+Contenu
+Outils indicatifs
+Unitaires
+Calcul des scores, algorithme des 90 %, ledger, règles de plafond (couverture ≥ 80 % sur le cœur métier)
+xUnit/Jest/Go test
+Intégration
+Services ↔ PostgreSQL/Redis/bus, reçus de paiement (sandbox)
+Testcontainers
+API / contrat
+Contrats REST et événements WebSocket
+OpenAPI, Pact, Postman/Newman
+End-to-end
+Parcours complet : inscription → salle → classement ; compétition simulée
+Playwright (web), Patrol/Maestro/Appium (mobile)
+Charge et endurance
+Simulation de 20 000 à 100 000 clients WebSocket sur une compétition complète ; pics d'inscription
+k6, Gatling, Locust, bots Go
+Chaos / résilience
+Perte d'une instance, redémarrage Redis, partition réseau pendant une question
+Chaos Mesh, Litmus
+Sécurité
+SAST/DAST, dépendances, pentest, tests d'abus du ledger
+SonarQube, OWASP ZAP, Snyk
+Anti-triche
+Rejeu de requêtes, bots, manipulation d'horloge client
+Scénarios dédiés
+Utilisabilité / accessibilité
+Tests utilisateurs, audit WCAG
+Sessions modérées, axe
+Compatibilité
+Parc d'appareils, réseaux dégradés (3G, latence, perte)
+BrowserStack, Firebase Test Lab
+Recette (UAT)
+Validation par le métier, bêta fermée puis ouverte
+Plan de recette, TestFlight/Play Internal
+Critères de sortie v1.0 : 0 anomalie bloquante ou critique ouverte ; p95 de latence de réponse < 150 ms à la charge cible ; compétition de répétition générale réussie avec ≥ 80 % de la charge cible ; taux de crash < 0,5 % ; audit de sécurité sans faille critique.
+13. Déploiement et exploitation
+13.1 Environnements
+Dev → Test/Intégration → Recette (staging, charge identique à la production réduite) → Production. Données anonymisées hors production.
+13.2 Chaîne CI/CD
+Commit -> build + tests unitaires + analyse statique + scan dépendances
+       -> image Docker signée -> registre
+       -> déploiement auto en Test -> tests d'intégration/E2E
+       -> promotion manuelle vers Recette -> tests de charge nocturnes
+       -> déploiement Production progressif (canary 5 % -> 25 % -> 100 %)
+       -> rollback automatique sur alerte
+13.3 Infrastructure
+Kubernetes multi-zones, autoscaling horizontal (HPA) + pré-chauffage planifié avant l'heure de compétition.
+Realtime Gateway sur un pool de nœuds dédié, répartiteur de charge L4/L7 avec affinité de session si nécessaire.
+PostgreSQL managé avec réplique et sauvegarde PITR ; Redis en cluster ; stockage objets + CDN.
+Infrastructure as Code (Terraform), secrets dans un coffre (Vault/Secrets Manager).
+13.4 Publication des applications
+Mobile : TestFlight / Play Internal → déploiement progressif (staged rollout) sur les stores, mises à jour obligatoires gérées par version minimale.
+Web : déploiement derrière CDN, versionnage des assets.
+Feature flags pour activer progressivement la compétition, la pub, le contenu utilisateur.
+13.5 Supervision et exploitation
+Tableaux de bord : joueurs connectés, latence, erreurs, survivants en temps réel, solde global de tokens.
+Alertes (astreinte) : taux d'erreur, saturation, échec d'une écriture du ledger, dérive d'horloge.
+Procédure de dégradation contrôlée : si la charge dépasse la capacité, report de la compétition avec communication et remboursement automatique.
+Plan de reprise après sinistre testé trimestriellement ; post-mortem pour tout incident majeur.
+14. Indicateurs de succès (KPI)
+DAU/MAU, rétention J1/J7/J30, taux de participation quotidienne à la compétition.
+Conversion vers achat, ARPDAU, revenu publicitaire, coût des cadeaux par joueur.
+Temps de réponse p95, taux de crash, taux de reconnexion réussie.
+Taux de contenu utilisateur modéré/refusé, taux de signalement, taux de fraude détectée.
+15. Risques majeurs
+Risque
+Impact
+Mitigation
+Surcharge pendant la compétition
+Élevé
+Tests de charge, pré-chauffage, report automatique
+Triche / bots / multi-comptes
+Élevé
+Vérification téléphone, attestation d'appareil, scoring de risque
+Qualification juridique (loterie, jeu d'argent)
+Élevé
+Avis juridique, règlement, tokens non convertibles
+Coût des cadeaux
+Moyen
+Budget plafonné, partenariats sponsorisés
+Pénurie de questions de qualité
+Moyen
+Pipeline éditorial, import, contributions modérées
+Contenu utilisateur inapproprié
+Moyen
+Modération auto + humaine
+Rejet par les stores (récompenses, pub)
+Moyen
+Respect des guidelines dès la conception
+Dépendance aux partenaires (forfaits)
+Moyen
+Catalogue de cadeaux alternatifs
+16. Questions ouvertes à trancher
+Confirmer l'interprétation de la règle des 90 % (H1) et le plafond du nombre de questions.
+Les Golden Tokens sont-ils échangeables ? contre quoi ?
+Marchés et langues du lancement ; devise et moyens de paiement locaux.
+Les salles à contenu utilisateur donnent-elles des tokens (risque de triche) ?
+Budget cadeaux et partenaires disponibles ; cadre légal des concours dans chaque pays.
+Heure(s) de la compétition quotidienne (une seule ou plusieurs zones horaires).
+17. Livrables attendus
+Code source et dépôts, applications publiées, back-office, documentation technique (architecture, API OpenAPI, ADR), jeux de tests et rapports de charge, scripts d'infrastructure, guide d'exploitation, politique de confidentialité et conditions d'utilisation, règlement des concours.
+

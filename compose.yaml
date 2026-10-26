@@ -1,0 +1,68 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: quiz
+      POSTGRES_DB: quiz
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run node scripts/init-env.js first}
+    ports: ["127.0.0.1:55432:5432"]
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quiz -d quiz"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Run node scripts/init-env.js first}
+    command:
+      [
+        "sh",
+        "-c",
+        'exec redis-server --appendonly yes --maxmemory-policy noeviction --requirepass "$$REDIS_PASSWORD"',
+      ]
+    ports: ["127.0.0.1:56379:6379"]
+    volumes: ["redis_data:/data"]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "REDISCLI_AUTH=$$REDIS_PASSWORD redis-cli ping | grep -q PONG",
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  migrate:
+    build: .
+    environment:
+      DATABASE_URL: postgres://quiz:${POSTGRES_PASSWORD}@postgres:5432/quiz
+    command: ["node", "scripts/migrate.js"]
+    depends_on:
+      postgres: { condition: service_healthy }
+  api:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://quiz:${POSTGRES_PASSWORD}@postgres:5432/quiz
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      HOST: 0.0.0.0
+      PORT: 3000
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+volumes:
+  postgres_data:
+  redis_data:

@@ -1,0 +1,31 @@
+{
+  "name": "quiz-game",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/server.js",
+    "migrate": "node --env-file-if-exists=.env scripts/migrate.js",
+    "test": "node --test test/*.test.js",
+    "test:integration": "node --env-file-if-exists=.env --test test/integration/*.test.js",
+    "test:embedded": "node --test test/embedded/*.test.js",
+    "demo": "node scripts/otp-demo.js",
+    "legacy:start": "node src/sqlite-server.js",
+    "legacy:demo": "node scripts/demo.js",
+    "test:browser": "node test/browser/two-player.mjs",
+    "test:admin:browser": "node test/browser/admin-login.mjs"
+  },
+  "dependencies": {
+    "libphonenumber-js": "1.13.15",
+    "pg": "8.23.1",
+    "redis": "6.3.0",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.11",
+    "playwright": "1.64.1"
+  }
+}
