@@ -1,3 +1,4 @@
+import {PersistentCatalog} from './persistent-catalog.js';
 import {randomBytes} from 'node:crypto';
 import {integer,requireRule} from './rules.js';
 import {seedCommitment,roundOutcome,cumulativeOrder} from './competition-rules.js';
@@ -10,6 +11,9 @@ export class CompetitionEngine {
     await c.query('INSERT INTO competition_events(competition_id,revision,state) SELECT id,revision,state FROM competitions WHERE id=$1',[id]);
   }
   async start(c,row) {
+    const {rows:participants}=await c.query('SELECT user_id FROM competition_registrations WHERE competition_id=$1',[row.id]);
+    const {rows:questions}=await c.query('SELECT question_id AS id FROM competition_questions WHERE competition_id=$1 ORDER BY position',[row.id]);
+    await new PersistentCatalog(this.store).expose(c,participants.map(p=>p.user_id),questions,row.id);
     const seed=randomBytes(32).toString('hex');
     await c.query(`UPDATE competitions SET state='PHASE_1',initial_players=(SELECT count(*) FROM competition_registrations WHERE competition_id=$1),tie_seed=$2,tie_commitment=$3 WHERE id=$1`,[row.id,seed,seedCommitment(seed)]);
     await this.next(c,{...row,current_question:-1,state:'PHASE_1'});
@@ -65,9 +69,26 @@ export class CompetitionEngine {
     const {rows:[question]}=await c.query('SELECT snapshot FROM competition_questions WHERE competition_id=$1 AND position=$2',[row.id,row.current_question]);
     requireRule(question,'Frozen question missing',409);
     const raw=await this.players(c,row);
-    // A disconnected/missing player may resynchronize for 24 seconds. This delays
-    // settlement only; answer() still enforces the original ten-second deadline.
-    if(raw.some(p=>p.choice===null) && now<new Date(row.question_deadline).getTime()+24000) return;
+    // Grace requires evidence of a lost network connection, never mere inactivity.
+    // A lease still based on a pre-deadline heartbeat is unconfirmed, not offline.
+    // Give it one lease window to prove liveness before classifying a network loss.
+    const {rows:[unconfirmed]}=await c.query(`SELECT 1 FROM competition_registrations r
+      WHERE r.competition_id=$1 AND r.eliminated_at IS NULL
+      AND NOT EXISTS(SELECT 1 FROM competition_answers a WHERE a.competition_id=$1 AND a.question_no=$2 AND a.user_id=r.user_id)
+      AND EXISTS(SELECT 1 FROM competition_connections p WHERE p.competition_id=$1 AND p.user_id=r.user_id
+        AND p.connected_at<=$3 AND p.disconnected_at IS NULL AND p.expires_at>clock_timestamp())
+      AND NOT EXISTS(SELECT 1 FROM competition_connections p WHERE p.competition_id=$1 AND p.user_id=r.user_id
+        AND p.disconnected_at IS NULL AND p.expires_at-interval '15 seconds'>=$3) LIMIT 1`,[row.id,row.current_question,row.question_deadline]);
+    if(unconfirmed && now<new Date(row.question_deadline).getTime()+15000)return;
+    const {rows:[network]}=await c.query(`SELECT 1 FROM competition_registrations r
+      WHERE r.competition_id=$1 AND r.eliminated_at IS NULL
+      AND NOT EXISTS(SELECT 1 FROM competition_answers a WHERE a.competition_id=$1 AND a.question_no=$2 AND a.user_id=r.user_id)
+      AND NOT EXISTS(SELECT 1 FROM competition_connections p WHERE p.competition_id=$1 AND p.user_id=r.user_id AND p.disconnected_at IS NULL AND p.expires_at>clock_timestamp())
+      AND (SELECT max(COALESCE(p.disconnected_at,p.expires_at)) FROM competition_connections p
+        WHERE p.competition_id=$1 AND p.user_id=r.user_id AND p.connected_at<=$4)
+        BETWEEN $3::timestamptz-interval '24 seconds' AND $4::timestamptz+interval '15 seconds'
+      LIMIT 1`,[row.id,row.current_question,new Date(now),row.question_deadline]);
+    if(network && now<new Date(row.question_deadline).getTime()+24000) return;
     const players=raw.map(p=>({id:p.id,correct:p.choice===question.snapshot.content.correctIndex,responseMs:p.response_ms??10000,cumulativeMs:Number(p.cumulative_ms)+(p.response_ms??10000),receivedMs:p.received_at?new Date(p.received_at).getTime():new Date(row.question_deadline).getTime()}));
     const outcome=roundOutcome(players,row.state,row.initial_players,row.tie_seed);
     if(row.state==='PHASE_1' && row.current_question+1>=Math.min(row.phase_one_limit,row.question_limit) && !outcome.milestone) {
@@ -84,34 +105,32 @@ export class CompetitionEngine {
     if(outcome.milestone) await this.milestone(c,row,outcome.survivors);
     await this.event(c,row.id);
   }
-  async answer(c,row,user,body) {
+  async answer(c,row,user,body,receivedAt) {
     integer(body.questionNo,0,199,'question number');integer(body.choice,0,3,'choice');
-    const {rows:[registration]}=await c.query('SELECT * FROM competition_registrations WHERE competition_id=$1 AND user_id=$2',[row.id,user.id]);
+    const {rows:[registration]}=await c.query('SELECT * FROM competition_registrations WHERE competition_id=$1 AND user_id=$2 FOR UPDATE',[row.id,user.id]);
     requireRule(registration,'Registration required',403);
     const {rows:[old]}=await c.query('SELECT choice FROM competition_answers WHERE competition_id=$1 AND question_no=$2 AND user_id=$3',[row.id,body.questionNo,user.id]);
-    if(old) {requireRule(old.choice===body.choice,'Answer conflict',409);return {accepted:true,questionNo:body.questionNo,revision:Number(row.revision)};}
+    if(old) {requireRule(old.choice===body.choice,'Answer conflict',409);return {accepted:true,questionNo:body.questionNo,revision:Number(row.revision),personalRevision:registration.answer_revision};}
     requireRule(['PHASE_1','PHASE_2'].includes(row.state) && registration.eliminated_at===null && !row.next_transition_at && body.questionNo===row.current_question,'Question closed',409);
-    // One authoritative timestamp, sampled after acquiring the competition lock.
+    // Receipt is sampled by PostgreSQL before auth/competition locks, never supplied by the client.
     const {rows:[clock]}=await c.query('SELECT clock_timestamp() AS now');
-    const now=new Date(clock.now).getTime(),start=new Date(row.question_started_at).getTime();
-    requireRule(now>=start && now<new Date(row.question_deadline).getTime(),'Question closed',409);
-    await c.query('INSERT INTO competition_answers(competition_id,question_no,user_id,choice,response_ms,received_at) VALUES($1,$2,$3,$4,$5,$6)',[row.id,body.questionNo,user.id,body.choice,Math.min(9999,Math.floor(now-start)),clock.now]);
-    const {rows:[updated]}=await c.query('UPDATE competitions SET revision=revision+1 WHERE id=$1 RETURNING revision',[row.id]);
-    return {accepted:true,questionNo:body.questionNo,revision:Number(updated.revision)};
+    const now=new Date(receivedAt).getTime(),start=new Date(row.question_started_at).getTime();
+    requireRule(Number.isFinite(now) && now>=start && now<new Date(row.question_deadline).getTime() && now<=new Date(clock.now).getTime(),'Question closed',409);
+    await c.query('INSERT INTO competition_answers(competition_id,question_no,user_id,choice,response_ms,received_at) VALUES($1,$2,$3,$4,$5,$6)',[row.id,body.questionNo,user.id,body.choice,Math.min(9999,Math.floor(now-start)),receivedAt]);
+    await c.query('UPDATE competition_registrations SET answer_revision=answer_revision+1 WHERE competition_id=$1 AND user_id=$2',[row.id,user.id]);
+    return {accepted:true,questionNo:body.questionNo,revision:Number(row.revision),personalRevision:registration.answer_revision+1};
   }
   async view(c,row,user) {
     const {rows:[me]}=await c.query('SELECT * FROM competition_registrations WHERE competition_id=$1 AND user_id=$2',[row.id,user.id]);
     requireRule(me,'Registration required',403);
-    await c.query('UPDATE competition_registrations SET last_seen_at=clock_timestamp() WHERE competition_id=$1 AND user_id=$2',[row.id,user.id]);
     const {rows:[counts]}=await c.query('SELECT count(*)::int AS participants,count(*) FILTER(WHERE eliminated_at IS NULL)::int AS survivors FROM competition_registrations WHERE competition_id=$1',[row.id]);
-    const {rows:[clock]}=await c.query('SELECT clock_timestamp() AS now');
-    const result={id:row.id,title:row.title,state:row.state,revision:Number(row.revision),serverTime:clock.now,startsAt:row.starts_at,deadline:row.question_deadline,nextTransitionAt:row.next_transition_at,questionNo:row.current_question,...counts,me:{eliminated:me.eliminated_at!==null,rank:me.final_rank,cumulativeMs:Number(me.cumulative_ms),milestoneAwarded:me.milestone_awarded,refunded:!!me.refunded_at},tieCommitment:row.tie_commitment,resolutionReason:row.resolution_reason};
+    const result={id:row.id,title:row.title,state:row.state,revision:Number(row.revision),personalRevision:me.answer_revision,serverTime:row.snapshot_time,startsAt:row.starts_at,deadline:row.question_deadline,nextTransitionAt:row.next_transition_at,questionNo:row.current_question,...counts,me:{eliminated:me.eliminated_at!==null,rank:me.final_rank,cumulativeMs:Number(me.cumulative_ms),milestoneAwarded:me.milestone_awarded,refunded:!!me.refunded_at},tieCommitment:row.tie_commitment,resolutionReason:row.resolution_reason};
     if(row.current_question>=0) {
       const {rows:[question]}=await c.query('SELECT snapshot FROM competition_questions WHERE competition_id=$1 AND position=$2',[row.id,row.current_question]);
       const {rows:[answer]}=await c.query('SELECT choice FROM competition_answers WHERE competition_id=$1 AND question_no=$2 AND user_id=$3',[row.id,row.current_question,user.id]);
       if(question) {
         const q=question.snapshot;
-        result.question={text:q.content.text,choices:q.content.choices,difficulty:q.difficulty};
+        result.question={text:q.content.text,choices:q.content.choices,difficulty:q.difficulty,media:q.content.media??null};
         result.myChoice=answer?.choice??null;
         const {rowCount}=await c.query('SELECT 1 FROM competition_rounds WHERE competition_id=$1 AND question_no=$2',[row.id,row.current_question]);
         if(rowCount) result.correction={correctIndex:q.content.correctIndex,explanation:q.content.explanation};

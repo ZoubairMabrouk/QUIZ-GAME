@@ -1,3 +1,5 @@
+import {catalogFixture} from './catalog-fixture.js';
+import {bootstrapStaff} from '../../src/bootstrap-staff.js';
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createClient } from "redis";
@@ -8,6 +10,7 @@ import { Auth } from "../../src/auth.js";
 import { DurableRooms } from "../../src/durable-rooms.js";
 export async function scenarios(t, store) {
   await store.migrate();
+  await catalogFixture(store);
   assert.ok(
     process.env.TEST_REDIS_URL,
     "Set TEST_REDIS_URL to an isolated Redis instance",
@@ -58,13 +61,17 @@ export async function scenarios(t, store) {
   try {
     await store.migrate();
     await store.migrate();
-    await t.test('seeded administrator password login, scope, role checks, rotation and password changes',async()=>{
+    await t.test('explicit administrator bootstrap login, scope, role checks, rotation and password changes',async()=>{
       const login=(username,password)=>api('/v1/admin/auth/login',{body:{username,password}});
-      assert.equal((await login('zoubai','incorrect')).status,401);
+      assert.equal((await store.pool.query('SELECT * FROM admin_credentials')).rowCount,0);
+      const password=randomUUID();
+      await bootstrapStaff(store,{username:'zoubair',password,developmentOnly:true});
+      await assert.rejects(bootstrapStaff(store,{username:'zoubair',password}));
+      assert.equal((await login('zoubair','incorrect')).status,401);
       assert.equal((await login('unknown-admin','incorrect')).status,401);
-      const initial=await login('zoubai','123456');
+      const initial=await login('zoubair',password);
       assert.equal(initial.status,200);assert.equal(initial.data.user.role,'administrator');
-      assert.equal(initial.data.user.username,'zoubai');
+      assert.equal(initial.data.user.username,'zoubair');
       assert.equal(JSON.stringify(initial.data).includes('password'),false);
       const token=initial.data.accessToken;
       assert.equal((await api('/v1/admin/audit',{token})).status,200);
@@ -72,11 +79,11 @@ export async function scenarios(t, store) {
       assert.equal((await api('/rooms',{token,body:{}})).status,403);
       assert.equal((await api('/wallet',{token})).status,403);
       assert.equal((await api('/v1/competitions/'+randomUUID()+'/register',{token,body:{}})).status,403);
-      const {rows:[credential]}=await store.pool.query("SELECT * FROM admin_credentials WHERE username='zoubai'");
-      assert.notEqual(credential.password_hash,'123456');assert.equal(credential.password_hash.length,128);
+      const {rows:[credential]}=await store.pool.query("SELECT * FROM admin_credentials WHERE username='zoubair'");
+      assert.notEqual(credential.password_hash,password);assert.equal(credential.password_hash.length,128);
       config.mode='production';
       try{
-        assert.equal((await login('zoubai','123456')).status,401);
+        assert.equal((await login('zoubair',password)).status,401);
         assert.equal((await api('/v1/admin/audit',{token})).status,401);
         assert.equal((await api('/auth/refresh',{body:{refreshToken:initial.data.refreshToken}})).status,401);
       }finally{config.mode='test';}
@@ -86,20 +93,20 @@ export async function scenarios(t, store) {
       assert.equal((await api('/v1/admin/audit',{token:rotated.data.accessToken})).status,200);
       await store.pool.query("UPDATE user_roles SET role='moderator' WHERE user_id=$1",[credential.user_id]);
       assert.equal((await api('/v1/admin/audit',{token:rotated.data.accessToken})).status,401);
-      assert.equal((await login('zoubai','123456')).status,401);
+      assert.equal((await login('zoubair',password)).status,401);
       await store.pool.query("UPDATE user_roles SET role='administrator' WHERE user_id=$1",[credential.user_id]);
-      const active=await login('zoubai','123456');assert.equal(active.status,200);
+      const active=await login('zoubair',password);assert.equal(active.status,200);
       const changedPassword=randomUUID();
-      const changed=await api('/v1/admin/auth/password',{token:active.data.accessToken,body:{currentPassword:'123456',newPassword:changedPassword}});
+      const changed=await api('/v1/admin/auth/password',{token:active.data.accessToken,body:{currentPassword:password,newPassword:changedPassword}});
       assert.equal(changed.status,200);
       assert.equal((await api('/v1/admin/audit',{token:active.data.accessToken})).status,401);
       assert.equal((await api('/v1/admin/audit',{token:rotated.data.accessToken})).status,401);
       await store.migrate();
-      await client.del(security.key('admin-login-account','zoubai'));
-      assert.equal((await login('zoubai','123456')).status,401);
+      await client.del(security.key('admin-login-account','zoubair'));
+      assert.equal((await login('zoubair',password)).status,401);
       config.mode='production';
       try{
-        assert.equal((await login('zoubai',changedPassword)).status,200);
+        assert.equal((await login('zoubair',changedPassword)).status,200);
         assert.equal((await api('/v1/admin/audit',{token:changed.data.accessToken})).status,200);
       }finally{config.mode='test';}
       for(let i=0;i<5;i++)assert.equal((await login('rate-limited-user','incorrect')).status,401);

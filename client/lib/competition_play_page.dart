@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
+import 'realtime_client.dart';
 import 'api.dart';
+import 'question_media.dart';
 
 class CompetitionPlayPage extends StatefulWidget {
   final QuizApi api;
@@ -17,59 +17,51 @@ class _CompetitionPlayPageState extends State<CompetitionPlayPage> {
   Map<String, dynamic>? state;
   String? error;
   bool loading = false, answering = false;
+  bool reloadPending = false;
   Timer? repair, clock;
-  WebSocketChannel? channel;
-  StreamSubscription<dynamic>? subscription;
-  int serverOffset = 0;
+  RealtimeClient? realtime;
+  bool live = false;
+  final Stopwatch serverClock = Stopwatch()..start();
+  int sampledServerTime = 0, sampledAt = 0;
+  int eventRevision = -1;
   @override
   void initState() {
     super.initState();
     unawaited(_load());
     if (widget.enableRealtime) unawaited(_connect());
-    repair = Timer.periodic(const Duration(seconds: 5), (_) {
-      unawaited(_load());
-      if (widget.enableRealtime && channel == null) unawaited(_connect());
-    });
+    if (!widget.enableRealtime) repair = Timer.periodic(const Duration(seconds: 30), (_) => unawaited(_load()));
     clock = Timer.periodic(const Duration(seconds: 1), (_) { if (mounted) setState(() {}); });
   }
   void _accept(Map<String, dynamic> next) {
-    if (!mounted || (state != null && (next['revision'] as num) < (state!['revision'] as num))) return;
+    if (!mounted || !acceptsSnapshot(state, next)) return;
     setState(() {
       state = next;
       error = null;
-      serverOffset = DateTime.parse(next['serverTime'] as String).millisecondsSinceEpoch - DateTime.now().millisecondsSinceEpoch;
+      sampledServerTime = serverMillis(next['serverTime']);
+      sampledAt = serverClock.elapsedMilliseconds;
     });
   }
   Future<void> _load() async {
-    if (loading) return;
+    if (loading) { reloadPending=true; return; }
     loading = true;
     try { _accept(await widget.api.call('/v1/competitions/${widget.id}/play')); }
     catch (e) { if (mounted) setState(() => error = e.toString()); }
-    finally { loading = false; }
+    finally { loading = false; if(reloadPending && mounted){reloadPending=false;unawaited(_load());} }
   }
   Future<void> _connect() async {
-    if (channel != null || !mounted) return;
-    try {
-      await widget.api.ensureSession();
-      if (!mounted || channel != null) return;
-      final socket = WebSocketChannel.connect(widget.api.socketUrl);
-      channel = socket;
-      await socket.ready;
-      if (!mounted) { await socket.sink.close(); return; }
-      subscription = socket.stream.listen((raw) {
-        final message = jsonDecode(raw as String) as Map<String, dynamic>;
-        if (message['type'] == 'authenticated') {
-          socket.sink.add(jsonEncode({'type': 'competition.subscribe', 'id': widget.id}));
-        } else if (message['type'] == 'competition.state') {
-          _accept(Map<String, dynamic>.from(message['state'] as Map));
-        } else if (message['type'] == 'competition.updated') {
-          unawaited(_load());
-        } else if (message['type'] == 'error') {
-          if (mounted) setState(() => error = message['message'] as String?);
+    realtime = RealtimeClient(api: widget.api,
+      subscribe: () => {'type':'competition.subscribe', 'id':widget.id, if(eventRevision>=0) 'afterRevision':eventRevision},
+      onLive: (value) { if(mounted) setState(() => live=value); },
+      repair: _load,
+      onMessage: (message) {
+        if(message['type']=='competition.state') _accept(Map<String,dynamic>.from(message['state'] as Map));
+        if(message['type']=='competition.updated') {
+          final revision=(message['revision'] as num).toInt();
+          if(revision>eventRevision) { eventRevision=revision; unawaited(_load()); }
         }
-      }, onError: (_) { if (identical(channel, socket)) channel = null; }, onDone: () { if (identical(channel, socket)) channel = null; });
-      socket.sink.add(jsonEncode({'type': 'auth', 'accessToken': widget.api.accessToken}));
-    } catch (_) { channel = null; }
+        if(message['type']=='error' && mounted) setState(() => error=message['message'] as String?);
+      });
+    await realtime!.connect();
   }
   Future<void> _answer(int choice) async {
     if (answering || state == null) return;
@@ -77,7 +69,7 @@ class _CompetitionPlayPageState extends State<CompetitionPlayPage> {
     try {
       final questionNo = state!['questionNo'];
       final accepted = await widget.api.call('/v1/competitions/${widget.id}/answers', body: {'questionNo': questionNo, 'choice': choice});
-      if (mounted && state?['questionNo'] == questionNo) setState(() { state = {...state!, 'myChoice': choice, 'revision': accepted['revision'] ?? state!['revision']}; });
+      if (mounted && state?['questionNo'] == questionNo && (accepted['revision'] as num? ?? state!['revision'] as num) >= (state!['revision'] as num)) setState(() { state = {...state!, 'myChoice': choice, 'revision': accepted['revision'] ?? state!['revision'], 'personalRevision': accepted['personalRevision'] ?? state!['personalRevision']}; });
       await _load();
     } catch (e) { if (mounted) setState(() => error = e.toString()); }
     finally { if (mounted) setState(() => answering = false); }
@@ -85,13 +77,13 @@ class _CompetitionPlayPageState extends State<CompetitionPlayPage> {
   @override
   void dispose() {
     repair?.cancel(); clock?.cancel();
-    unawaited(subscription?.cancel()); unawaited(channel?.sink.close());
+    realtime?.close();
     super.dispose();
   }
   @override
   Widget build(BuildContext context) {
     final s = state;
-    final now = DateTime.fromMillisecondsSinceEpoch(DateTime.now().millisecondsSinceEpoch + serverOffset);
+    final now = DateTime.fromMillisecondsSinceEpoch(sampledServerTime + serverClock.elapsedMilliseconds - sampledAt);
     final deadline = s?['deadline'] == null ? null : DateTime.parse(s!['deadline'] as String);
     final seconds = deadline == null ? 0 : (deadline.difference(now).inMilliseconds / 1000).ceil().clamp(0, 10);
     final me = s?['me'] as Map<String, dynamic>?;
@@ -102,6 +94,7 @@ class _CompetitionPlayPageState extends State<CompetitionPlayPage> {
       appBar: AppBar(title: Text(s?['title'] as String? ?? 'Compétition'), actions: [IconButton(onPressed: _load, icon: const Icon(Icons.refresh), tooltip: 'Actualiser')]),
       body: ListView(padding: const EdgeInsets.all(20), children: [
         if (s == null) const LinearProgressIndicator(),
+        if (widget.enableRealtime && !live) const Text('Connexion interrompue : reprise en cours.'),
         if (error != null) Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
         if (s != null) ...[
           Text('${s['state']}', style: Theme.of(context).textTheme.headlineSmall),
@@ -114,6 +107,7 @@ class _CompetitionPlayPageState extends State<CompetitionPlayPage> {
           if (q != null) ...[
             const SizedBox(height: 20),
             Text(q['text'] as String, style: Theme.of(context).textTheme.titleLarge),
+            QuestionMedia(media:q['media']),
             Text(seconds > 0 && correction == null ? '$seconds s' : 'Réponses fermées'),
             for (final entry in (q['choices'] as List<dynamic>).asMap().entries)
               Padding(padding: const EdgeInsets.symmetric(vertical: 5), child: OutlinedButton(onPressed: canAnswer && !answering ? () => _answer(entry.key) : null, child: Text('${entry.value}${s['myChoice'] == entry.key ? ' • Votre réponse' : ''}${correction?['correctIndex'] == entry.key ? ' ✓' : ''}'))),

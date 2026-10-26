@@ -3,7 +3,7 @@ if (!process.env.DATABASE_URL || !process.env.REDIS_URL)
   throw new Error("Run with node --env-file=.env scripts/test-services.js");
 const r = spawnSync(
   process.execPath,
-  ["--test", "test/integration/services.test.js", "test/integration/realtime.test.js", "test/integration/competitions.test.js"],
+  ["--test", "test/integration/services.test.js", "test/integration/realtime.test.js", "test/integration/competitions.test.js", "test/integration/lot2.test.js"],
   {
     stdio: "inherit",
     env: {

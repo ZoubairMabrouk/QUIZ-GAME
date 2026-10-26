@@ -1,3 +1,4 @@
+import {catalogFixture} from './catalog-fixture.js';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {createClient} from 'redis';
@@ -21,6 +22,7 @@ class Peer {
 export async function realtimeScenarios(t,store){
   assert.ok(process.env.TEST_REDIS_URL,'TEST_REDIS_URL required');
   await store.migrate();
+  await catalogFixture(store);
   const client=createClient({url:process.env.TEST_REDIS_URL,socket:{connectTimeout:2000,reconnectStrategy:false}});client.on('error',()=>{});await client.connect();
   const prefix='ws-test:'+randomUUID()+':';const security=new RedisSecurity(client,'test-secret-for-realtime-integration',prefix);
   const config={mode:'test',provider:'mock',countries:['US'],channels:['sms','whatsapp'],mockPhones:['+12025550123','+12025550124'],sendDailyLimit:1000,tickMs:40,allowedOrigins:['http://localhost:5173']};

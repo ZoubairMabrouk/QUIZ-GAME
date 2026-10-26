@@ -14,7 +14,14 @@ export function validateQuestion(body) {
   requireRule(['draft','validated','retired'].includes(body.status),'Invalid question status');
   requireRule(typeof body.category==='string' && /^[a-z0-9_-]{1,50}$/.test(body.category),'Invalid category');
   requireRule(body.development === undefined || typeof body.development === 'boolean','Invalid development flag');
-  return {text:body.text.trim(),choices:body.choices.map(x=>x.trim()),correctIndex:body.correctIndex,explanation:body.explanation.trim(),source:body.source.trim()};
+  let media=null;
+  if(body.media!=null){
+    requireRule(body.media.type==='image'&&typeof body.media.url==='string'&&body.media.url.length<=2000&&typeof body.media.alt==='string'&&body.media.alt.trim().length>0&&body.media.alt.length<=300,'Invalid media');
+    let url;try{url=new URL(body.media.url);}catch{requireRule(false,'Invalid media URL');}
+    requireRule(url.protocol==='https:'&&!url.username&&!url.password,'HTTPS media URL required');
+    media={type:body.media.type,url:url.href,alt:body.media.alt.trim()};
+  }
+  return {text:body.text.trim(),choices:body.choices.map(x=>x.trim()),correctIndex:body.correctIndex,explanation:body.explanation.trim(),source:body.source.trim(),media};
 }
 
 export class Editorial {
@@ -56,7 +63,7 @@ export class Editorial {
   }
   async import(user,body) {
     if(body.format==='csv') body={questions:csvQuestions(body.csv)};
-    requireRule(Array.isArray(body.questions) && body.questions.length>0 && body.questions.length<=100,'Import 1–100 questions');
+    requireRule(Array.isArray(body.questions) && body.questions.length>0 && body.questions.length<=200,'Import 1–200 questions');
     return this.store.transaction(async c=>{
       await this.authorize(c,user);
       const errors=[];
@@ -73,12 +80,13 @@ export class Editorial {
       return {imported:questions.length,errors:[],questions};
     });
   }
-  async list(user) {
+  async list(user,page={}) {
+    const {limit,offset}=this.admin.pagination(page);
     return this.store.transaction(async c=>{
       await this.authorize(c,user);
-      const {rows:questions}=await c.query('SELECT * FROM editorial_questions ORDER BY updated_at DESC,id LIMIT 100');
+      const {rows:questions}=await c.query('SELECT * FROM editorial_questions ORDER BY updated_at DESC,id LIMIT $1 OFFSET $2',[limit+1,offset]);
       const {rows:categories}=await c.query('SELECT * FROM question_categories ORDER BY slug');
-      return {questions,categories};
+      return {questions:questions.slice(0,limit),categories,nextOffset:questions.length>limit?offset+limit:null};
     });
   }
   async history(user,id) {

@@ -1,5 +1,7 @@
 # API compétition v1 — préparation locale
 
+> Mise à jour lot 1 : voir [LOT1_REALTIME.md](LOT1_REALTIME.md) pour pagination, présence, récurrence, rappels et incidents. Ce contrat remplace les anciennes descriptions du curseur global et de la grâce pour simple inactivité. L'authentification staff actuelle est décrite dans [ADMIN_AUTH.md](ADMIN_AUTH.md).
+
 > Contrat de la première tranche, complété et remplacé pour le jeu par [ETAPE_4_COMPETITIONS.md](ETAPE_4_COMPETITIONS.md). Les compétitions démarrent maintenant ; elles ne sont plus systématiquement remboursées au départ.
 
 Toutes les routes nécessitent le Bearer existant obtenu par OTP téléphone. Aucune session email/social ni mot de passe administrateur ajouté. Les routes d'administration relisent le rôle en PostgreSQL ; le rôle modérateur ne suffit pas.

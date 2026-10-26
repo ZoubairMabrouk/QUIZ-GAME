@@ -16,8 +16,8 @@ try {
     let data={};
     if(path==='/api/v1/admin/auth/login'){
       const body=request.postDataJSON();
-      assert.equal(body.username,'zoubai');assert.equal(body.password,'123456');logins++;
-      data={accessToken:'a'.repeat(64),refreshToken:'b'.repeat(64),expiresAt:'2099-01-01T00:00:00Z',user:{username:'zoubai',role:'administrator'}};
+      assert.equal(body.username,'zoubair');assert.equal(body.password,'browser-fixture-only');logins++;
+      data={accessToken:'a'.repeat(64),refreshToken:'b'.repeat(64),expiresAt:'2099-01-01T00:00:00Z',user:{username:'zoubair',role:'administrator'}};
     } else if(path==='/api/v1/competitions') data={competitions:[]};
     else if(path==='/api/v1/admin/audit')data={items:[{action:'admin.login'}]};
     else if(path==='/api/auth/logout')data={loggedOut:true};
@@ -27,10 +27,10 @@ try {
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}`);
   await page.getByRole('heading',{name:'Connexion administrateur'}).waitFor();
   assert.equal(await page.getByLabel('Téléphone international').count(),0);
-  await page.getByLabel('Nom d’utilisateur').fill('zoubai');
+  await page.getByLabel('Nom d’utilisateur').fill('zoubair');
   const password=page.getByLabel('Mot de passe',{exact:true});
   assert.equal(await password.getAttribute('type'),'password');
-  await password.fill('123456');await password.press('Enter');
+  await password.fill('browser-fixture-only');await password.press('Enter');
   await page.getByRole('heading',{name:'Planifier une compétition'}).waitFor();assert.equal(logins,1);
   await page.getByRole('button',{name:'audit',exact:true}).click();
   await page.getByRole('button',{name:'Charger les dernières actions'}).click();

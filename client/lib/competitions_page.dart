@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'api.dart';
 import 'competition_play_page.dart';
 import 'leaderboards_page.dart';
+import 'competition_activity_page.dart';
 
 class CompetitionsPage extends StatefulWidget {
   final QuizApi api;
@@ -13,6 +14,8 @@ class CompetitionsPage extends StatefulWidget {
 class _CompetitionsPageState extends State<CompetitionsPage> {
   List<dynamic> events = [];
   int balance = 0;
+  int offset = 0;
+  int? nextOffset;
   bool busy = true;
   String? error;
   @override
@@ -21,10 +24,10 @@ class _CompetitionsPageState extends State<CompetitionsPage> {
     setState(() { busy = true; error = null; });
     try {
       final results = await Future.wait([
-        widget.api.call('/v1/competitions'), widget.api.call('/wallet'),
+        widget.api.call('/v1/competitions?limit=25&offset=$offset'), widget.api.call('/wallet'),
       ]);
       if (!mounted) return;
-      setState(() { events = results[0]['competitions'] as List<dynamic>; balance = (results[1]['silver'] as num).toInt(); });
+      setState(() { events = results[0]['competitions'] as List<dynamic>; nextOffset=results[0]['nextOffset'] as int?; balance = (results[1]['silver'] as num).toInt(); });
     } catch (e) { if (mounted) setState(() => error = e.toString()); }
     finally { if (mounted) setState(() => busy = false); }
   }
@@ -40,12 +43,20 @@ class _CompetitionsPageState extends State<CompetitionsPage> {
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Compétitions'), actions: [IconButton(onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => LeaderboardsPage(api: widget.api))), icon: const Icon(Icons.emoji_events_outlined), tooltip: 'Hall of Fame'), IconButton(onPressed: busy ? null : _load, icon: const Icon(Icons.refresh), tooltip: 'Actualiser')]),
     body: ListView(padding: const EdgeInsets.all(20), children: [
+      Wrap(spacing:12,children:[
+        TextButton(onPressed:()=>Navigator.of(context).push(MaterialPageRoute<void>(builder:(_)=>CompetitionActivityPage(api:widget.api))),child:const Text('Mon historique')),
+        TextButton(onPressed:()=>Navigator.of(context).push(MaterialPageRoute<void>(builder:(_)=>CompetitionActivityPage(api:widget.api,reminders:true))),child:const Text('Rappels')),
+      ]),
       Text('Solde : $balance Silver', style: Theme.of(context).textTheme.titleLarge),
       const Padding(padding: EdgeInsets.symmetric(vertical: 16), child: Text('Inscrivez-vous avant la fermeture. Répondez en dix secondes et suivez votre classement.')),
       if (busy) const LinearProgressIndicator(),
       if (error != null) Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
       if (!busy && events.isEmpty) const Text('Aucune compétition planifiée.'),
       for (final raw in events) _event(Map<String, dynamic>.from(raw as Map)),
+      Wrap(children:[
+        if(offset>0)TextButton(onPressed:busy?null:(){offset=(offset-25).clamp(0,1000000);_load();},child:const Text('Précédent')),
+        if(nextOffset!=null)TextButton(onPressed:busy?null:(){offset=nextOffset!;_load();},child:const Text('Suivant')),
+      ]),
     ]),
   );
   Widget _event(Map<String, dynamic> event) {

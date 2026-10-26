@@ -1,6 +1,8 @@
 # Quiz Game — étape 3 : WebSocket + Flutter
 
-Administration : connexion par nom d'utilisateur/mot de passe et compte initial créé par migration. Voir [les identifiants locaux et les commandes](docs/ADMIN_AUTH.md). Les joueurs conservent la connexion téléphone/OTP.
+Administration : connexion par nom d'utilisateur/mot de passe et création explicite du compte staff. Voir [les commandes de bootstrap](docs/ADMIN_AUTH.md). Les joueurs conservent la connexion téléphone/OTP.
+
+Compétition et temps réel : [contrats et politiques du lot 1](docs/LOT1_REALTIME.md), [validation du lot 1](docs/TEST_REPORT_LOT1.md).
 
 Module compétition et back-office ajoutés : [installation, API, décisions et démo accélérée](docs/ETAPE_4_COMPETITIONS.md), [traçabilité F1–F11](docs/EXIGENCES_F1_F11.md). Le moteur persistant, les phases, les gains Golden et le parcours Flutter sont intégrés. Les cadeaux réels, paiements et autres écarts restent explicitement documentés.
 

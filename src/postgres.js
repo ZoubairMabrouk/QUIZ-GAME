@@ -120,6 +120,7 @@ export class PostgresStore {
       pseudo: u.pseudo,
       phoneMasked: u.phone ? u.phone.slice(0, 3) + "••••" + u.phone.slice(-2) : null,
       phoneVerified: !!u.phone_verified_at,
+      avatar:u.avatar??'owl',country:u.country??null,languages:u.languages??['fr'],
     };
   }
   async authenticate(token, {allowDevelopmentAdmin=true} = {}) {
@@ -135,7 +136,7 @@ export class PostgresStore {
       WHERE s.access_hash=$1 AND s.access_expires_at>now() AND s.rotated_at IS NULL AND f.revoked_at IS NULL`,
       [tokenHash(token)],
     );
-    requireRule(row, "Invalid or expired session", 401);
+    requireRule(row && !row.deleted_at, "Invalid or expired session", 401);
     requireRule(row.audience!=='admin'||row.role==='administrator','Invalid or expired session',401);
     requireRule(row.audience!=='admin'||allowDevelopmentAdmin||!row.development_only,'Invalid or expired session',401);
     return { ...this.publicUser(row), familyId: row.family_id, audience:row.audience };
@@ -165,7 +166,7 @@ export class PostgresStore {
       await c.query("UPDATE sessions SET rotated_at=now() WHERE id=$1", [
         row.id,
       ]);
-      return this.session(c, row.user_id, row.family_id);
+      return this.session(c, row.user_id, row.family_id,row.audience);
     });
     requireRule(result, "Invalid or reused refresh token; sign in again", 401);
     return result;
@@ -194,7 +195,8 @@ export class PostgresStore {
       throw e;
     }
   }
-  async wallet(userId) {
+  async wallet(userId,{limit=50,offset=0}={}) {
+    limit=Number(limit);offset=Number(offset);integer(limit,1,100,'page limit');integer(offset,0,1000000,'page offset');
     return this.transaction(async (c) => {
       const {
         rows: [b],
@@ -203,13 +205,13 @@ export class PostgresStore {
         [userId],
       );
       const { rows: entries } = await c.query(
-        "SELECT * FROM ledger WHERE user_id=$1 ORDER BY created_at DESC,id LIMIT 100",
-        [userId],
+        "SELECT * FROM ledger WHERE user_id=$1 ORDER BY created_at DESC,id LIMIT $2 OFFSET $3",
+        [userId,limit+1,offset],
       );
       return {
         silver: Number(b.silver_balance),
         golden: Number(b.golden_balance),
-        entries,
+        entries:entries.slice(0,limit),nextOffset:entries.length>limit?offset+limit:null,
       };
     });
   }
@@ -256,16 +258,17 @@ export class PostgresStore {
       "Insufficient funds",
       409,
     );
-    if (reason === "room_reward") {
+    if (['room_reward','daily_bonus'].includes(reason)) {
       requireRule(currency === "silver" && amount > 0, "Invalid room reward");
       const {
         rows: [g],
       } = await c.query(
-        `SELECT COALESCE(SUM(amount),0) AS gained FROM ledger WHERE user_id=$1 AND reason='room_reward'
+        `SELECT COALESCE(SUM(amount),0) AS gained FROM ledger WHERE user_id=$1 AND reason IN ('room_reward','daily_bonus')
         AND created_at >= (date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')`,
         [userId],
       );
-      if (Number(g.gained) + amount > 100)
+      const {rows:[settings]}=await c.query('SELECT daily_silver_cap FROM game_settings WHERE id=true');
+      if (Number(g.gained) + amount > settings.daily_silver_cap)
         return { amount: 0, reason: "daily_cap" };
     }
     const {

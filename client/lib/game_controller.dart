@@ -1,9 +1,8 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
+import 'realtime_client.dart';
 
 import 'api.dart';
 
@@ -16,14 +15,14 @@ class GameController extends ChangeNotifier {
   }
   Map<String, dynamic>? user, room, wallet, configuration;
   String? challengeId, error, roomCode;
+  String? pendingRoomCode;
   bool busy = false, live = false;
   int attempts = 0;
   DateTime? resendAt;
-  Timer? _ticker, _retry, _heartbeat;
-  WebSocketChannel? _socket;
-  StreamSubscription<dynamic>? _subscription;
+  Timer? _ticker;
+  RealtimeClient? _realtime;
   final Stopwatch _clock = Stopwatch()..start();
-  int _receivedAt = 0, _lastMessage = 0, _latency = 0, _generation = 0;
+  int _receivedAt = 0;
   bool _disposed = false;
   bool get mock => configuration?['otpMode'] == 'mock';
   List<String> get channels =>
@@ -34,8 +33,7 @@ class GameController extends ChangeNotifier {
       .max(
         0,
         ((room?['remainingMs'] as num? ?? 0).toDouble() -
-                (_clock.elapsedMilliseconds - _receivedAt) -
-                _latency) /
+                (_clock.elapsedMilliseconds - _receivedAt)) /
             1000,
       )
       .ceil();
@@ -109,6 +107,7 @@ class GameController extends ChangeNotifier {
         user = session['user'] as Map<String, dynamic>;
         challengeId = null;
         wallet = await api.call('/wallet');
+        if(pendingRoomCode!=null){final code=pendingRoomCode!;pendingRoomCode=null;_enter(await api.call('/rooms/$code/join',body:{}));}
       });
   Future<void> saveProfile(String pseudo) => run(() async {
         user = await api.call('/me/profile', body: {'pseudo': pseudo.trim()});
@@ -138,18 +137,13 @@ class GameController extends ChangeNotifier {
     acceptState(state);
     unawaited(connect());
   }
+  void enterRoom(Map<String,dynamic> state)=>_enter(state);
+  void clearDeletedAccount(){disconnect();user=null;wallet=null;room=null;roomCode=null;api.clearSession();notifyListeners();}
+  Future<void> rematch()=>run(()async{_enter(await api.call('/rooms/$roomCode/rematch',body:{}));});
 
   void acceptState(Map<String, dynamic> state) {
     if (roomCode != state['code']) return;
-    if (room != null) {
-      final oldRev = room!['revision'] as int? ?? 0,
-          nextRev = state['revision'] as int? ?? 0;
-      if (nextRev < oldRev ||
-          (nextRev == oldRev &&
-              (state['serverTime'] as num) < (room!['serverTime'] as num))) {
-        return;
-      }
-    }
+    if (!acceptsSnapshot(room, state)) return;
     final wasFinished = status == 'finished';
     room = state;
     _receivedAt = _clock.elapsedMilliseconds;
@@ -198,120 +192,23 @@ class GameController extends ChangeNotifier {
   }
 
   Future<void> connect() async {
+    _realtime?.close();
     if (_disposed || roomCode == null || !api.signedIn) return;
-    _retry?.cancel();
-    final generation = ++_generation;
-    await _subscription?.cancel();
-    await _socket?.sink.close();
-    live = false;
-    if (!_disposed) notifyListeners();
-    try {
-      await api.ensureSession();
-      if (_disposed || generation != _generation) return;
-      final socket = WebSocketChannel.connect(api.socketUrl);
-      _socket = socket;
-      await socket.ready.timeout(const Duration(seconds: 8));
-      if (_disposed || generation != _generation) {
-        await socket.sink.close();
-        return;
-      }
-      _lastMessage = _clock.elapsedMilliseconds;
-      _subscription = socket.stream.listen(
-        (raw) {
-          if (generation != _generation || _disposed) return;
-          _lastMessage = _clock.elapsedMilliseconds;
-          final message = jsonDecode(raw as String) as Map<String, dynamic>;
-          switch (message['type']) {
-            case 'authenticated':
-              socket.sink.add(
-                jsonEncode({'type': 'subscribe', 'code': roomCode}),
-              );
-            case 'room.state':
-              live = true;
-              attempts = 0;
-              acceptState(message['state'] as Map<String, dynamic>);
-            case 'pong':
-              if (message['clientTime'] is num) {
-                _latency = ((_clock.elapsedMilliseconds -
-                            (message['clientTime'] as num)) /
-                        2)
-                    .round()
-                    .clamp(0, 2000);
-              }
-            case 'error':
-              if (message['status'] == 401) {
-                api.expiresAt = DateTime.fromMillisecondsSinceEpoch(0);
-              } else {
-                error = message['message'] as String;
-                notifyListeners();
-              }
-          }
-        },
-        onError: (_) {
-          _scheduleReconnect(generation);
-        },
-        onDone: () {
-          if (socket.closeCode == 4401) {
-            api.expiresAt = DateTime.fromMillisecondsSinceEpoch(0);
-          }
-          _scheduleReconnect(generation);
-        },
-      );
-      socket.sink.add(
-        jsonEncode({'type': 'auth', 'accessToken': api.accessToken}),
-      );
-      _heartbeat?.cancel();
-      _heartbeat = Timer.periodic(const Duration(seconds: 10), (_) {
-        if (generation != _generation) return;
-        if (_clock.elapsedMilliseconds - _lastMessage > 25000) {
-          unawaited(socket.sink.close());
-          _scheduleReconnect(generation);
-        } else {
-          socket.sink.add(
-            jsonEncode({
-              'type': 'ping',
-              'clientTime': _clock.elapsedMilliseconds,
-            }),
-          );
-        }
+    _realtime = RealtimeClient(api: api,
+      subscribe: () => {'type':'subscribe', 'code':roomCode},
+      onLive: (value) { live=value; if (!_disposed) notifyListeners(); },
+      repair: () async {
+        try { final code=roomCode; if(code != null) acceptState(await api.call('/rooms/$code')); } catch (_) {}
+      },
+      onMessage: (message) {
+        if (message['type']=='room.state') acceptState(Map<String,dynamic>.from(message['state'] as Map));
+        if (message['type']=='error') { error=message['message'] as String?; if(!_disposed) notifyListeners(); }
       });
-    } catch (e) {
-      if (!api.signedIn) {
-        user = null;
-        room = null;
-        roomCode = null;
-        error = e.toString();
-        notifyListeners();
-      } else {
-        _scheduleReconnect(generation);
-      }
-    }
-  }
-
-  void _scheduleReconnect(int generation) {
-    if (_disposed ||
-        generation != _generation ||
-        roomCode == null ||
-        !api.signedIn) {
-      return;
-    }
-    live = false;
-    _heartbeat?.cancel();
-    _retry?.cancel();
-    final delay = math.min(15, 1 << math.min(attempts++, 4));
-    _retry = Timer(Duration(seconds: delay), () => unawaited(connect()));
-    notifyListeners();
+    await _realtime!.connect();
   }
 
   void disconnect() {
-    _generation++;
-    _retry?.cancel();
-    _heartbeat?.cancel();
-    unawaited(_subscription?.cancel());
-    unawaited(_socket?.sink.close());
-    _subscription = null;
-    _socket = null;
-    live = false;
+    _realtime?.close(); _realtime=null; live=false;
   }
 
   void home() {

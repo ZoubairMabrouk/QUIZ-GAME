@@ -13,6 +13,10 @@ import { Competitions } from './competitions.js';
 import { Editorial } from './editorial.js';
 import { Administration } from './administration.js';
 import { AdminAuth } from './admin-auth.js';
+import {People} from './people.js';
+import {Economy} from './economy.js';
+import {PersistentCatalog} from './persistent-catalog.js';
+import QRCode from 'qrcode';
 export function createApp({ store, security, provider, config }) {
   const auth = new Auth({ store, security, provider, config });
   const rooms = new DurableRooms(store);
@@ -20,6 +24,7 @@ export function createApp({ store, security, provider, config }) {
   const editorial = new Editorial(store);
   const administration = new Administration(store);
   const adminAuth = new AdminAuth({store,security,config});
+  const people=new People(store),economy=new Economy(store),catalog=new PersistentCatalog(store);
   const server = createServer(async (req, res) => {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
@@ -59,7 +64,7 @@ export function createApp({ store, security, provider, config }) {
         const chunks = [];
         for await (const chunk of req) {
           size += chunk.length;
-          requireRule(size <= 16384, "Body too large", 413);
+          requireRule(size <= (path==='/v1/admin/questions/import'?2097152:16384), "Body too large", 413);
           chunks.push(chunk);
         }
         try {
@@ -82,6 +87,7 @@ export function createApp({ store, security, provider, config }) {
         await security.limit("refresh", ip, 30, 60);
         return send(200, await store.refresh(body.refreshToken,{allowDevelopmentAdmin:config.mode!=='production'}));
       }
+      const receivedAt = req.method==='POST' && /^\/v1\/competitions\/[^/]+\/answers$/.test(path) ? await competitions.receipt() : undefined;
       const token = req.headers.authorization?.match(
         /^Bearer ([a-f0-9]{64})$/,
       )?.[1];
@@ -108,25 +114,43 @@ export function createApp({ store, security, provider, config }) {
         return send(200, profile);
       }
       if (req.method === "POST" && path === "/me/profile")
-        return send(200, await store.profile(user.id, body.pseudo));
+        return send(200, await people.profile(user, body));
+      if(req.method==='GET' && path==='/me/profile')return send(200,await people.profile(user));
+      if(req.method==='GET' && path==='/me/export')return send(200,await people.export(user));
+      if(req.method==='POST' && path==='/me/delete')return send(200,await people.remove(user,body));
+      if(req.method==='GET' && path==='/friends')return send(200,await people.friends(user,Object.fromEntries(new URL(req.url,'http://localhost').searchParams)));
+      if(req.method==='POST' && path==='/friends')return send(200,await people.friend(user,body));
+      if(req.method==='GET' && path==='/invitations')return send(200,await people.invitations(user));
+      if(req.method==='POST' && path==='/invitations')return send(201,await people.invite(user,body));
+      if(req.method==='GET' && path==='/catalog/categories')return send(200,await catalog.categories());
+      if(req.method==='POST' && path==='/wallet/daily-bonus')return send(200,await economy.bonus(user));
+      if(path==='/v1/admin/game-settings' && ['GET','POST'].includes(req.method))return send(200,await economy.settings(user,req.method==='POST'?body:undefined));
+      if(req.method==='POST' && path==='/v1/admin/wallet/reconcile'){
+        await store.transaction(c=>competitions.administrator(c,user.id));
+        return send(200,await economy.reconcile({repair:body.repair===true,after:body.after??null}));
+      }
       if (req.method === "GET" && path === "/wallet")
-        return send(200, await store.wallet(user.id));
+        return send(200, await store.wallet(user.id,Object.fromEntries(new URL(req.url,'http://localhost').searchParams)));
       if (req.method === 'GET' && path === '/v1/competitions')
-        return send(200, await competitions.list(user));
+        return send(200, await competitions.list(user,undefined,Object.fromEntries(new URL(req.url,'http://localhost').searchParams)));
+      if(req.method==='GET' && path==='/v1/me/competitions')
+        return send(200,await competitions.history(user,Object.fromEntries(new URL(req.url,'http://localhost').searchParams)));
+      if(req.method==='GET' && path==='/v1/me/competition-notifications')
+        return send(200,await competitions.notifications(user,Object.fromEntries(new URL(req.url,'http://localhost').searchParams)));
       const adminRead=path.match(/^\/v1\/admin\/(audit|ledger|users)$/);
       if(req.method==='GET' && adminRead)
         return send(200,await administration.read(user,adminRead[1],Number(new URL(req.url,'http://localhost').searchParams.get('offset')??0)));
       if(req.method==='POST' && path==='/v1/admin/wallet/adjustments')
         return send(200,await administration.adjust(user,body));
       if(req.method==='GET' && path==='/v1/leaderboards')
-        return send(200,await competitions.leaderboard(new URL(req.url,'http://localhost').searchParams.get('period')??'all'));
+        return send(200,await competitions.leaderboard(new URL(req.url,'http://localhost').searchParams.get('period')??'all',Object.fromEntries(new URL(req.url,'http://localhost').searchParams)));
       const playRoute=path.match(/^\/v1\/competitions\/([^/]+)\/(play|answers)$/);
       if(playRoute) {
         if(req.method==='GET' && playRoute[2]==='play') return send(200,await competitions.play(user,playRoute[1]));
-        if(req.method==='POST' && playRoute[2]==='answers') return send(200,await competitions.play(user,playRoute[1],body));
+        if(req.method==='POST' && playRoute[2]==='answers') return send(200,await competitions.play(user,playRoute[1],body,receivedAt));
       }
       if (req.method === 'GET' && path === '/v1/admin/catalog')
-        return send(200, await editorial.list(user));
+        return send(200, await editorial.list(user,Object.fromEntries(new URL(req.url,'http://localhost').searchParams)));
       if(req.method==='GET' && path==='/v1/admin/catalog/statistics')
         return send(200,await editorial.statistics(user));
       if (req.method === 'POST' && path === '/v1/admin/categories')
@@ -142,6 +166,8 @@ export function createApp({ store, security, provider, config }) {
       }
       if (req.method === 'POST' && path === '/v1/admin/competitions')
         return send(201, await competitions.create(user, body));
+      const scheduleRoute=path.match(/^\/v1\/admin\/competition-schedules\/([^/]+)$/);
+      if(req.method==='POST' && scheduleRoute)return send(200,await competitions.schedule(user,scheduleRoute[1],body.enabled));
       const competitionRoute = path.match(/^\/v1\/(admin\/)?competitions\/([^/]+)(?:\/(open|cancel|register))?$/);
       if (competitionRoute) {
         const [, admin, id, action] = competitionRoute;
@@ -152,15 +178,24 @@ export function createApp({ store, security, provider, config }) {
         if (req.method === 'POST' && admin && ['open','cancel'].includes(action))
           return send(200, await competitions[action](user,id));
       }
-      if (req.method === "POST" && path === "/rooms") {
+      if(req.method==='GET' && path==='/rooms')return send(200,await rooms.list(user,Object.fromEntries(new URL(req.url,'http://localhost').searchParams)));
+      if(req.method==='GET' && path==='/me/games')return send(200,await rooms.history(user,Object.fromEntries(new URL(req.url,'http://localhost').searchParams)));
+      if (req.method === "POST" && ['/rooms','/solo','/duels'].includes(path)) {
         await security.limit("room-create", user.id, 10, 3600);
-        return send(201, await rooms.create(user, body));
+        return send(201, await rooms.create(user, {...body,mode:path==='/solo'?'solo':path==='/duels'?'duel':'room'}));
       }
       const match = path.match(
-        /^\/rooms\/([A-Z2-9]{6})(?:\/(join|ready|start|answers|next))?$/,
+        /^\/rooms\/([A-Z2-9]{6})(?:\/(join|ready|start|answers|next|kick|host|leave|rematch))?$/,
       );
+      const share=path.match(/^\/rooms\/([A-Z2-9]{6})\/share$/);
+      if(req.method==='GET' && share){
+        await rooms.snapshot(user,share[1]);
+        const link=new URL('/#/join/'+share[1],config.playerPublicUrl??'http://localhost:5173').href;
+        return send(200,{link,qr:await QRCode.toDataURL(link,{width:256,margin:4})});
+      }
       if (match) {
         const [, code, action] = match;
+        if(req.method==='POST' && action==='rematch')return send(201,await rooms.rematch(user,code));
         if ((req.method === "GET" && !action)||(req.method === "POST" && action)) {
           const result=await rooms.execute(user,code,action??'state',body);await realtime.publish(code);return send(200,result);
         }

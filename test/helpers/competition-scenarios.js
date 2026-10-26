@@ -16,7 +16,7 @@ export async function competitionScenarios(t,store) {
   await store.pool.query("INSERT INTO user_roles(user_id,role) VALUES($1,'administrator'),($2,'moderator')",[admin.id,b.id]);
   const editorial=new Editorial(store);
   await editorial.category(admin,{slug:'science',name:'Science'});
-  const question={category:'science',language:'fr',difficulty:1,status:'validated',development:true,text:'Question test ?',choices:['A','B','C','D'],correctIndex:0,explanation:'Explication test.',source:'Fixture de test'};
+  const question={category:'science',language:'fr',difficulty:1,status:'validated',development:false,text:'Question test ?',choices:['A','B','C','D'],correctIndex:0,explanation:'Explication test.',source:'Fixture de test'};
   const first=await editorial.save(admin,question);
   await store.transaction(c=>store.post(c,{userId:a.id,amount:100,reason:'test_funding',refId:a.id,key:a.id}));
   const input={title:'Test compétition',startsAt:new Date(Date.now()+3600000).toISOString(),timeZone:'Africa/Lagos',silverCost:25,minimumPlayers:2,categories:['science'],questionLimit:1,repetitionDays:0};

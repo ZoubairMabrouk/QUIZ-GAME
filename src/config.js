@@ -24,13 +24,14 @@ export function loadConfig(env = process.env) {
     databaseUrl: required(env, "DATABASE_URL"),
     redisUrl: required(env, "REDIS_URL"),
     host: env.HOST ?? "127.0.0.1",
+    playerPublicUrl:env.PLAYER_PUBLIC_URL??'http://localhost:5173',
     port: Number(env.PORT ?? 3000),
     countries: (env.OTP_ALLOWED_COUNTRIES ?? "FR,TN,MA,DZ")
       .split(",")
       .map((s) => s.trim()),
     channels: (env.OTP_CHANNELS ?? "sms").split(",").map((s) => s.trim()),
     mockPhones: (env.MOCK_OTP_PHONES ?? "+12025550123,+12025550124").split(","),
-    allowedOrigins: (env.ALLOWED_ORIGINS??"http://localhost:5173,http://127.0.0.1:5173").split(",").filter(Boolean),
+    allowedOrigins: (env.ALLOWED_ORIGINS??"http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174").split(",").filter(Boolean),
     sendDailyLimit: Number(env.OTP_GLOBAL_DAILY_LIMIT ?? 1000),
   };
   requireRule(

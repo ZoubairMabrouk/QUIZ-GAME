@@ -8,6 +8,10 @@ import 'package:flutter/services.dart';
 import 'api.dart';
 import 'game_controller.dart';
 import 'competitions_page.dart';
+import 'player_account_page.dart';
+import 'play_setup_page.dart';
+import 'room_share_page.dart';
+import 'question_media.dart';
 
 SemanticsHandle? webSemantics;
 
@@ -18,7 +22,10 @@ void main() {
     'API_URL',
     defaultValue: 'http://localhost:3000',
   );
-  runApp(QuizApp(controller: GameController(QuizApi(url))));
+  final controller=GameController(QuizApi(url));
+  final destination=Uri.base.fragment.isEmpty?Uri.base.path:Uri.base.fragment;
+  controller.pendingRoomCode=RegExp(r'^/join/([A-Z2-9]{6})$').firstMatch(destination)?.group(1);
+  runApp(QuizApp(controller: controller));
 }
 
 const ink = Color(0xFF18233E),
@@ -31,6 +38,7 @@ class QuizApp extends StatelessWidget {
   const QuizApp({super.key, required this.controller});
   @override
   Widget build(BuildContext context) => MaterialApp(
+        initialRoute:'/',
         title: 'Quiz • Entre amis',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
@@ -541,9 +549,21 @@ class _QuizHomeState extends State<QuizHome> with WidgetsBindingObserver {
     return _two(intro, form);
   }
 
+  Future<void> _setupGame() async {
+    final state=await Navigator.of(context).push<Map<String,dynamic>>(MaterialPageRoute(builder:(_)=>PlaySetupPage(api:g.api)));
+    if(state!=null && mounted)g.enterRoom(state);
+  }
+  Future<void> _account() async {
+    final result=await Navigator.of(context).push<Map<String,dynamic>>(MaterialPageRoute(builder:(_)=>PlayerAccountPage(api:g.api,userId:g.user!['id'] as String)));
+    if(!mounted)return;
+    if(result?['deleted']==true){g.clearDeletedAccount();return;}
+    if(result?['join']!=null)await g.joinRoom(result!['join'] as String);
+    await g.run(()async{g.user=await g.api.call('/me');g.wallet=await g.api.call('/wallet');});
+  }
   Widget _home() => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          Wrap(spacing:12,children:[FilledButton.icon(onPressed:_setupGame,icon:const Icon(Icons.play_arrow),label:const Text('Solo, duel ou salle')),OutlinedButton.icon(onPressed:_account,icon:const Icon(Icons.person_outline),label:const Text('Profil, amis et portefeuille'))]),
           OutlinedButton.icon(
             onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => CompetitionsPage(api: g.api))),
             icon: const Icon(Icons.emoji_events_outlined),
@@ -649,7 +669,7 @@ class _QuizHomeState extends State<QuizHome> with WidgetsBindingObserver {
                   FilledButton.icon(
                     key: const Key('create-room'),
                     onPressed:
-                        g.busy ? null : () => g.createRoom(count, duration),
+                        g.busy ? null : _setupGame,
                     icon: const Icon(Icons.add),
                     label: const Text('Créer une salle'),
                   ),
@@ -851,6 +871,8 @@ class _QuizHomeState extends State<QuizHome> with WidgetsBindingObserver {
   Widget _players() => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          Text(g.room?['name'] as String? ?? 'Salle'),
+          TextButton.icon(onPressed:()=>Navigator.of(context).push(MaterialPageRoute<void>(builder:(_)=>RoomSharePage(api:g.api,code:g.roomCode!))),icon:const Icon(Icons.qr_code),label:const Text('Lien et QR')),
           _title('DANS LA SALLE', '${g.players.length} joueurs'),
           for (final p in g.players)
             Padding(
@@ -873,6 +895,7 @@ class _QuizHomeState extends State<QuizHome> with WidgetsBindingObserver {
                     ),
                   ),
                   const SizedBox(width: 6),
+                  if(g.isHost && p['id']!=g.user?['id'] && g.status=='lobby')PopupMenuButton<String>(tooltip:'Gerer le joueur',onSelected:(action)=>g.command(action,{'userId':p['id']}),itemBuilder:(_)=>const [PopupMenuItem(value:'host',child:Text('Transferer le role hote')),PopupMenuItem(value:'kick',child:Text('Expulser'))]),
                   Icon(
                     p['ready'] == true ? Icons.check_circle : Icons.more_horiz,
                     color: p['ready'] == true ? const Color(0xFF168A68) : muted,
@@ -945,6 +968,7 @@ class _QuizHomeState extends State<QuizHome> with WidgetsBindingObserver {
               ),
             ),
             const SizedBox(height: 28),
+            QuestionMedia(media:q['media']),
             for (var i = 0; i < choices.length; i++)
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
@@ -1139,6 +1163,7 @@ class _QuizHomeState extends State<QuizHome> with WidgetsBindingObserver {
               ),
               const SizedBox(height: 24),
             ],
+            if(g.isHost)OutlinedButton(onPressed:g.busy?null:g.rematch,child:const Text('Revanche')),
             FilledButton(
               onPressed: g.home,
               child: const Text('Retour à l’accueil'),

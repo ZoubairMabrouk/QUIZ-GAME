@@ -1,52 +1,29 @@
-# Admin username/password login — 24 October 2026
+# Administration : bootstrap explicite
 
-The admin space now uses a username and password, as requested. Player login continues to require phone/OTP. This supersedes the previous back-office OTP login instructions.
+Les migrations ne créent plus de compte ni de mot de passe connu. Les joueurs conservent la connexion téléphone/OTP et la validation réelle en production.
 
-Migration `005_admin_password_login.sql` creates the initial account:
-
-- Username: `zoubai`
-- Initial password: `123456`
-- Role: `administrator`
-
-The database stores a salted scrypt hash, never the plaintext password. The migration is versioned and runs once; rerunning migrations does not reset a changed password. It creates a separate staff identity without a fake telephone or player wallet. Existing player rows retain their phone requirement.
-
-The initial credential is for local development and is rejected in production, including access/refresh sessions created with that credential before switching modes. In the admin space, open **compte** to replace it with a password of at least twelve characters. Changing the password revokes all previous admin sessions, issues a fresh session and removes the development-only restriction.
-
-## Run
+Configurer DATABASE_URL et injecter QUIZ_STAFF_PASSWORD (12 à 1024 caractères) depuis votre gestionnaire de secrets, sans placer le secret dans les arguments de commande. Puis :
 
 ```powershell
-# Local Node API
 npm.cmd run migrate
+npm.cmd run bootstrap:staff -- zoubair
+Remove-Item Env:QUIZ_STAFF_PASSWORD
 npm.cmd start
-
-# Separate terminal: back-office
 npm.cmd run dev --prefix admin
 ```
 
-For the existing Docker API, rebuild it so it includes the new login route:
+`zoubair` est un exemple choisi explicitement. Il n'existe aucun mot de passe par défaut. Le bootstrap crée une identité staff, un rôle administrateur et une trace d'audit dans une transaction. Il refuse un nom existant et ne réinitialise ni compte, ni mot de passe, ni session. Les secrets ne sont pas journalisés. Le changement de mot de passe authentifié révoque toutes les anciennes sessions admin.
 
-```powershell
-docker compose up --build -d
-```
+Ports : Flutter 5173 (`flutter run -d chrome --web-port 5173`), admin 5174, API 3000. Le proxy Vite /api cible http://127.0.0.1:3000. Les origines localhost et 127.0.0.1 sur 5173 et 5174 figurent dans les valeurs par défaut et .env.example. Mettre à jour ALLOWED_ORIGINS dans un .env déjà existant si nécessaire ; le fichier existant n'est pas écrasé.
 
-Open `http://127.0.0.1:5173`. The migration has already been applied and the Docker API rebuilt/restarted during this change; existing data and volumes were preserved. The rebuild command above is for subsequent source updates.
+## Migrations compatibles
 
-## API and boundaries
+005 est corrigée sur place : suppression du seed et du NOT NULL du téléphone, avec contrainte conditionnelle imposant le téléphone aux players. Format et unicité sont conservés. Cette correction permet de franchir 005 sur une base neuve ou arrêtée après 004 ; 006 seule n'aurait pas résolu ce blocage.
 
-- `POST /v1/admin/auth/login`: `{username,password}`. Username matching is case insensitive. The server checks the current `administrator` role; moderator and missing-role accounts cannot log in with this endpoint.
-- Access/refresh tokens use the existing hashed-token session infrastructure, with a separate `admin` audience. Refresh rotation preserves that audience. Role removal invalidates existing admin access and refresh tokens.
-- `POST /v1/admin/auth/password`: admin Bearer plus `{currentPassword,newPassword}`; verifies the current password, updates the hash, revokes old sessions, returns a replacement session.
-- `/auth/refresh` and `/auth/logout` retain their existing contracts.
-- Password attempts are limited through Redis (five per username/minute and twenty per IP/minute); dependency failures do not bypass limits. Unknown accounts, wrong passwords, disallowed role and the development account in production return the same 401 message.
-- Admin tokens may access administration and competition read views. They cannot create/join rooms, access player wallets, register/play competitions, change a player profile or authenticate on the player WebSocket.
-- Passwords and session tokens are not logged, included in URLs, prefilled into the form or stored in browser storage. The UI uses password autocomplete fields, clears credentials after success and clears displayed admin results at logout.
+006 corrige aussi les installations ayant déjà enregistré 005. Le runner utilise une transaction et un verrou consultatif. Une ancienne exécution échouée via le runner est annulée et peut être relancée. Tous les comptes existants, rôles, credentials et révocations restent conservés. Les credentials development_only restent refusés en production avant changement du mot de passe. Aucun renommage automatique zoubai/zoubair sur les comptes existants.
 
-## Validation
+## API et tests
 
-Executed successfully: `npm.cmd test` (18 tests), `node --env-file=.env scripts/test-services.js` (30 entries, native PostgreSQL and Redis), `npm.cmd run build --prefix admin` (TypeScript and Vite).
+POST /v1/admin/auth/login reçoit username/password et exige le rôle administrator actuel. L'audience admin interdit le portefeuille et les parties joueur. POST /v1/admin/auth/password vérifie currentPassword, remplace le hash scrypt et révoque les anciennes sessions. Redis impose les limites de connexion.
 
-`node test/browser/admin-login.mjs` also passed in headless Microsoft Edge: username/password fields (no OTP), masked password, Enter-to-submit, admin page access, audit display and cleared data after logout. The browser scenario mocks API responses; the native HTTP integration scenario above exercises the real password authentication and database.
-
-Live Docker API check also succeeded after rebuilding: the initial account authenticated with the administrator role, read the admin audit, was denied access to the player wallet (403), and its verification session was logged out. No session token was printed and the initial password was not changed on the local account.
-
-The added HTTP scenario verifies the migrated credential, hash storage, wrong and unknown credentials, administrator role enforcement and revocation, admin/player isolation, production rejection of the default, session rotation, password change, old-session revocation, preservation of changed credentials when migrations rerun, production login after password change, and rate limiting. Test password changes happen only in an isolated test schema, not in the local seeded account.
+`npm run test:migrations` utilise PostgreSQL PGlite et le vrai serveur HTTP : base neuve, mise à niveau 004, 005 enregistrée, contrainte téléphone, bootstrap, refus de remplacement, connexion, droits et révocation. Redis est remplacé par un adaptateur de test : cela ne valide ni ses limites ni la concurrence native. `scripts/test-services.js` couvre ces dépendances réelles. Voir TEST_REPORT_LOT0.md pour cette session ; les anciens rapports restent historiques.

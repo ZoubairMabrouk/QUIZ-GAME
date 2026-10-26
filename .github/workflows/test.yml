@@ -28,6 +28,8 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm test
+      - run: npm run test:migrations
+      - run: node --test test/embedded/competitions.test.js test/embedded/event-delivery.test.js test/embedded/realtime-competition.test.js test/embedded/lot2.test.js test/embedded/lot2-http.test.js
       - run: npm run test:integration
         env:
           TEST_DATABASE_URL: postgres://quiz:test-only-password@127.0.0.1:5432/quiz_test

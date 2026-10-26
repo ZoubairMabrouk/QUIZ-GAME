@@ -1,3 +1,4 @@
+import {catalogFixture} from '../helpers/catalog-fixture.js';
 // Requires a built Flutter client, a Redis test server and Playwright Chromium.
 // Starts disposable PGlite + API + static server; sends no SMS/WhatsApp.
 import {chromium} from 'playwright';
@@ -13,7 +14,7 @@ import {RedisSecurity} from '../../src/redis-security.js';
 import {MockVerify} from '../../src/otp-provider.js';
 
 assert.ok(process.env.TEST_REDIS_URL,'TEST_REDIS_URL required');
-const store=await embeddedStore();await store.migrate();
+const store=await embeddedStore();await store.migrate();await catalogFixture(store);
 const client=createClient({url:process.env.TEST_REDIS_URL,socket:{connectTimeout:2000,reconnectStrategy:false}});client.on('error',()=>{});await client.connect();
 const prefix='browser-test:'+randomUUID()+':';const security=new RedisSecurity(client,'browser-test-secret-with-at-least-32-chars',prefix);
 const config={mode:'test',provider:'mock',countries:['US'],channels:['sms','whatsapp'],mockPhones:['+12025550123','+12025550124'],sendDailyLimit:1000,allowedOrigins:['http://127.0.0.1:5173'],tickMs:40};
